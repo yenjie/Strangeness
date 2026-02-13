@@ -66,7 +66,7 @@ struct KtoPiParameters
 };
 
 //============================================================//
-// Analyzer class (mirrors the DataAnalyzer style)
+// Analyzer class 
 //============================================================//
 
 class KtoPiAnalyzer
@@ -264,21 +264,15 @@ public:
 
       outf->cd();
 
-      // If you don't have smartWrite in utilities.h yet,
-      // you can replace these with hK->Write(); etc.
       smartWrite(hK);
       smartWrite(hPi);
       smartWrite(hKoverPi);
 
-      // Optional: also save a PNG of the ratio, like in the macro
       TCanvas c1("c1", "K/pi vs NchTag", 800, 600);
       hKoverPi->SetMarkerStyle(20);
       hKoverPi->SetMarkerSize(1.0);
       hKoverPi->Draw("E1");
       c1.Write();  // store in ROOT file
-
-      // This will go in the current working directory
-      c1.SaveAs("KoverPi_vs_NchTag.png");
    }
 };
 
