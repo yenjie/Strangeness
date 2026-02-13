@@ -1,4 +1,4 @@
-//============================================================//
+//============================================================
 // KtoPiAnalysis.cpp
 //
 // Computes kaon and pion yields vs Nch_tag and K/pi ratio
@@ -7,15 +7,20 @@
 // Intended usage (following PhysicsZHadronEEC style):
 //
 //   ./KtoPiAnalysis \
-//      Input=sample/Strangeness/merged_mc_v2.root \
-//      Output=output/KtoPi.root \
-//      MaxNchTag=60 MaxEvents=-1
+//     Input=sample/Strangeness/merged_mc_v2.root \
+//     Output=output/KtoPi.root \
+//     MaxNchTag=60 MaxEvents=-1
 //
-//============================================================//
+// New option:
+//   IsGen=true   -> count K/π at generator level using GenID (PDG ID)
+//   IsGen=false  -> (default) use reconstructed PID info
+//
+//============================================================
 
 #include <iostream>
-#include <cmath>
 #include <string>
+#include <cmath>
+
 // ROOT
 #include "TFile.h"
 #include "TTree.h"
@@ -24,7 +29,7 @@
 #include "TMath.h"
 #include "TNtuple.h"
 
-// Project common code (you may need to copy these from PhysicsZHadronEEC)
+// Project common code
 #include "utilities.h"      // smartWrite, etc.
 #include "helpMessage.h"    // printHelpMessage()
 #include "CommandLine.h"    // CommandLine parser
@@ -35,292 +40,356 @@
 
 using namespace std;
 
-//============================================================//
+//============================================================
 // Simple parameter container for this analysis
-//============================================================//
+//============================================================
 
-struct KtoPiParameters
-{
-   std::string input;
-   std::string output;
+struct KtoPiParameters {
+    std::string input;
+    std::string output;
 
-   int    MaxNchTag;   // max Nch_tag, overflow goes into last bin
-   int    MaxEvents;   // max events to process (-1 = all)
+    int    MaxNchTag;   // max Nch_tag, overflow goes into last bin
+    int    MaxEvents;   // max events to process (-1 = all)
+    double EcmRef;      // reference energy in GeV (91.2)
+    int    MinNch;      // Nch >= MinNch
+    double MinTheta;    // in radians
+    double MaxTheta;    // in radians
 
-   double EcmRef;      // reference energy in GeV (91.2)
-   int    MinNch;      // Nch >= MinNch
-   double MinTheta;    // in radians
-   double MaxTheta;    // in radians
+    bool   IsGen;       // if true, count K/π at generator level
 
-   KtoPiParameters()
-      : input("sample/Strangeness/merged_mc_v2.root")
-      , output("output/KtoPi.root")
-      , MaxNchTag(60)
-      , MaxEvents(-1)
-      , EcmRef(91.2)
-      , MinNch(7)
-      , MinTheta(30.0 * TMath::Pi() / 180.0)
-      , MaxTheta(150.0 * TMath::Pi() / 180.0)
-   {
-   }
+    KtoPiParameters()
+        : input("sample/Strangeness/merged_mc_v2.root")
+        , output("output/KtoPi.root")
+        , MaxNchTag(60)
+        , MaxEvents(-1)
+        , EcmRef(91.2)
+        , MinNch(7)
+        , MinTheta(30.0 * TMath::Pi() / 180.0)
+        , MaxTheta(150.0 * TMath::Pi() / 180.0)
+        , IsGen(false)
+    {
+    }
 };
 
-//============================================================//
-// Analyzer class 
-//============================================================//
+//============================================================
+// Analyzer class
+//============================================================
 
-class KtoPiAnalyzer
-{
+class KtoPiAnalyzer {
 public:
-   TFile *inf;
-   TFile *outf;
+    TFile *inf;
+    TFile *outf;
+    StrangenessTreeMessenger *M;
 
-   StrangenessTreeMessenger *M;
+    TH1D *hK;
+    TH1D *hPi;
+    TH1D *hKoverPi;
 
-   TH1D *hK;
-   TH1D *hPi;
-   TH1D *hKoverPi;
-
-   KtoPiParameters par;
+    KtoPiParameters par;
 
 public:
-   KtoPiAnalyzer(const KtoPiParameters &apar)
-      : inf(nullptr)
-      , outf(nullptr)
-      , M(nullptr)
-      , hK(nullptr)
-      , hPi(nullptr)
-      , hKoverPi(nullptr)
-      , par(apar)
-   {
-      // Open input
-      inf = new TFile(par.input.c_str());
-      if (inf == nullptr || inf->IsZombie()) {
-         cerr << "Error: cannot open input file '" << par.input << "'" << endl;
-         return;
-      }
+    KtoPiAnalyzer(const KtoPiParameters &apar)
+        : inf(nullptr)
+        , outf(nullptr)
+        , M(nullptr)
+        , hK(nullptr)
+        , hPi(nullptr)
+        , hKoverPi(nullptr)
+        , par(apar)
+    {
+        // Open input
+        inf = new TFile(par.input.c_str());
+        if (inf == nullptr || inf->IsZombie()) {
+            cerr << "Error: cannot open input file '" << par.input << "'" << endl;
+            return;
+        }
 
-      // Attach messenger to tree "Tree"
-      M = new StrangenessTreeMessenger(*inf, std::string("Tree"));
+        // Attach messenger to tree "Tree"
+        M = new StrangenessTreeMessenger(*inf, std::string("Tree"));
 
-      // Open output
-      outf = new TFile(par.output.c_str(), "RECREATE");
-      if (outf == nullptr || outf->IsZombie()) {
-         cerr << "Error: cannot create output file '" << par.output << "'" << endl;
-         return;
-      }
-      outf->cd();
+        // Open output
+        outf = new TFile(par.output.c_str(), "RECREATE");
+        if (outf == nullptr || outf->IsZombie()) {
+            cerr << "Error: cannot create output file '" << par.output << "'" << endl;
+            return;
+        }
 
-      // Book histograms
-      const int maxNchTag = par.MaxNchTag;
-      const int nbins     = maxNchTag / 4 + 1;  // same as your macro
+        outf->cd();
 
-      hK = new TH1D("hK",
-         "Kaon and pion yields vs N_{ch}^{tag};N_{ch}^{tag};Yield (sum over events)",
-         nbins, -0.5, maxNchTag + 0.5);
+        // Book histograms
+        const int maxNchTag = par.MaxNchTag;
+        const int nbins     = maxNchTag / 4 + 1; // same as your macro
 
-      hPi = (TH1D*)hK->Clone("hPi");
-      hPi->SetTitle("Pion candidates vs N_{ch}^{tag}");
+        hK = new TH1D("hK",
+                      "Kaon candidates vs N_{ch}^{tag};N_{ch}^{tag};Yield (sum over events)",
+                      nbins, -0.5, maxNchTag + 0.5);
 
-      hK->Sumw2();
-      hPi->Sumw2();
+        hPi = (TH1D *)hK->Clone("hPi");
+        hPi->SetTitle("Pion candidates vs N_{ch}^{tag};N_{ch}^{tag};Yield (sum over events)");
 
-      hKoverPi = nullptr;  // will be built after the event loop
-   }
+        hK->Sumw2();
+        hPi->Sumw2();
 
-   ~KtoPiAnalyzer()
-   {
-      // Clean up histograms (the file should own them after writing, but be safe)
-      delete hK;
-      delete hPi;
-      delete hKoverPi;
+        hKoverPi = nullptr; // will be built after the event loop
+    }
 
-      if (inf) {
-         inf->Close();
-         delete inf;
-      }
+    ~KtoPiAnalyzer() {
+        // Clean up histograms (the file should own them after writing, but be safe)
+        delete hK;
+        delete hPi;
+        delete hKoverPi;
 
-      if (outf) {
-         outf->Close();
-         delete outf;
-      }
+        if (inf) {
+            inf->Close();
+            delete inf;
+        }
+        if (outf) {
+            outf->Close();
+            delete outf;
+        }
 
-      delete M;
-   }
+        delete M;
+    }
 
-   void analyze()
-   {
-      if (M == nullptr || inf == nullptr || outf == nullptr)
-         return;
+    void analyze() {
+        if (M == nullptr || inf == nullptr || outf == nullptr)
+            return;
 
-      // Event loop
-      long long nEntries = M->GetEntries();
-      if (par.MaxEvents > 0 && par.MaxEvents < nEntries)
-         nEntries = par.MaxEvents;
+        // Event loop
+        long long nEntries = M->GetEntries();
+        if (par.MaxEvents > 0 && par.MaxEvents < nEntries)
+            nEntries = par.MaxEvents;
 
-      cout << "Total entries to process: " << nEntries << endl;
+        cout << "Total entries to process: " << nEntries << endl;
 
-      ProgressBar Bar(cout, nEntries);
-      Bar.SetStyle(1);
+        ProgressBar Bar(cout, nEntries);
+        Bar.SetStyle(1);
+        long long deltaI = nEntries / 100 + 1;
 
-      long long deltaI = nEntries / 100 + 1;
+        const double EcmRef   = par.EcmRef;
+        const int    MinNch   = par.MinNch;
+        const double MinTheta = par.MinTheta;
+        const double MaxTheta = par.MaxTheta;
 
-      const double EcmRef = par.EcmRef;
-      const int    MinNch = par.MinNch;
-      const double MinTheta = par.MinTheta;
-      const double MaxTheta = par.MaxTheta;
+        for (long long ievt = 0; ievt < nEntries; ++ievt) {
+            M->GetEntry(ievt);
 
-      for (long long ievt = 0; ievt < nEntries; ++ievt)
-      {
-         M->GetEntry(ievt);
+            if (ievt % deltaI == 0) {
+                Bar.Update(ievt);
+                Bar.Print();
+            }
 
-         if (ievt % deltaI == 0) {
-            Bar.Update(ievt);
-            Bar.Print();
-         }
+            // Safety: cap NReco to messenger array size
+            if (M->NReco > STRANGE_MAX_RECO) {
+                cerr << "Warning: NReco = " << M->NReco
+                     << " > STRANGE_MAX_RECO = " << STRANGE_MAX_RECO
+                     << " at entry " << ievt
+                     << ". Clipping to STRANGE_MAX_RECO." << endl;
+            }
 
-         // Safety: cap NReco to messenger array size
-         if (M->NReco > STRANGE_MAX_RECO) {
-            cerr << "Warning: NReco = " << M->NReco
-                 << " > STRANGE_MAX_RECO = " << STRANGE_MAX_RECO
-                 << " at entry " << ievt
-                 << ". Clipping to STRANGE_MAX_RECO." << endl;
-         }
-         int nreco = (M->NReco < STRANGE_MAX_RECO)
-                     ? static_cast<int>(M->NReco)
-                     : STRANGE_MAX_RECO;
+            int nreco = (M->NReco < STRANGE_MAX_RECO)
+                      ? static_cast<int>(M->NReco)
+                      : STRANGE_MAX_RECO;
 
-         //-------------------------
-         // Event selection
-         //-------------------------
+            // Optionally prepare NGen if we are doing generator-level counting
+            int ngen = 0;
+            if (par.IsGen) {
+                if (M->NGen > STRANGE_MAX_GEN) {
+                    cerr << "Warning: NGen = " << M->NGen
+                         << " > STRANGE_MAX_GEN = " << STRANGE_MAX_GEN
+                         << " at entry " << ievt
+                         << ". Clipping to STRANGE_MAX_GEN." << endl;
+                }
+                ngen = (M->NGen < STRANGE_MAX_GEN)
+                     ? static_cast<int>(M->NGen)
+                     : STRANGE_MAX_GEN;
+            }
 
-         // Sum(RecoE)
-         double sumRecoE = 0.0;
-         for (int i = 0; i < nreco; ++i)
-            sumRecoE += M->RecoE[i];
+            //-------------------------
+            // Event selection
+            //-------------------------
 
-         // Sum(RecoE)/EcmRef > 0.5
-         if (sumRecoE / EcmRef <= 0.5)
-            continue;
+            // Sum(RecoE)
+            double sumRecoE = 0.0;
+            for (int i = 0; i < nreco; ++i)
+                sumRecoE += M->RecoE[i];
 
-         // Nch >= MinNch
-         if (M->Nch < MinNch)
-            continue;
+            // Sum(RecoE)/EcmRef > 0.5
+            if (sumRecoE / EcmRef <= 0.5)
+                continue;
 
-         // 30° < acos(ThrustZ) < 150°
-         double theta = std::acos(M->ThrustZ);
-         if (theta <= MinTheta)
-            continue;
-         if (theta >= MaxTheta)
-            continue;
+            // Nch >= MinNch
+            if (M->Nch < MinNch)
+                continue;
 
-         //-------------------------
-         // Build NchTag, nK, nPi
-         //-------------------------
+            // 30° < acos(ThrustZ) < 150°
+            double theta = std::acos(M->ThrustZ);
+            if (theta <= MinTheta)
+                continue;
+            if (theta >= MaxTheta)
+                continue;
 
-         int NchTag = 0;
-         int nK = 0;
-         int nPi = 0;
+            //-------------------------
+            // Build NchTag, nK, nPi
+            //-------------------------
 
-         for (int i = 0; i < nreco; ++i) {
-            bool isKaonTag   = (M->RecoPIDKaon[i]   >= 2);
-            bool isPionTag   = (M->RecoPIDPion[i]   >= 2);
-            bool isProtonTag = (M->RecoPIDProton[i] >= 2);
+            int NchTag = 0;
+            int nK     = 0;
+            int nPi    = 0;
 
-            // NchTag = Sum(RecoPIDKaon>=2 || RecoPIDPion>=2 || RecoPIDProton>=2)
-            if (isKaonTag || isPionTag || isProtonTag)
-               ++NchTag;
+            if (par.IsGen) {
+                // NchTag is still defined by reconstructed tagged tracks
+                for (int i = 0; i < nreco; ++i) {
+                    bool isKaonTag   = (M->RecoPIDKaon[i]   >= 2);
+                    bool isPionTag   = (M->RecoPIDPion[i]   >= 2);
+                    bool isProtonTag = (M->RecoPIDProton[i] >= 2);
 
-            if (isKaonTag)
-               ++nK;
-            if (isPionTag)
-               ++nPi;
-         }
+                    // NchTag = Sum(RecoPIDKaon>=2 || RecoPIDPion>=2 || RecoPIDProton>=2)
+                    if (isKaonTag || isPionTag || isProtonTag)
+                        ++NchTag;
+                }
 
-         // Put overflow NchTag into the last bin
-         if (NchTag > par.MaxNchTag)
-            NchTag = par.MaxNchTag;
+                // Count generator-level kaons and pions using PDG ID
+                for (int i = 0; i < ngen; ++i) {
+                    const int pdg    = M->GenID[i];
+                    const int absPdg = (pdg >= 0 ? pdg : -pdg);
 
-         // Fill event-wise yields
-         hK->Fill(NchTag,  nK);
-         hPi->Fill(NchTag, nPi);
-      }
+                    // Charged kaons: K+, K-
+                    if (absPdg == 321)
+                        ++nK;
 
-      cout << endl << "Event loop finished." << endl;
+                    // Charged pions: pi+, pi-
+                    if (absPdg == 211)
+                        ++nPi;
+                }
+            }
+            else {
+                // Original reco-based counting
+                for (int i = 0; i < nreco; ++i) {
+                    bool isKaonTag   = (M->RecoPIDKaon[i]   >= 2);
+                    bool isPionTag   = (M->RecoPIDPion[i]   >= 2);
+                    bool isProtonTag = (M->RecoPIDProton[i] >= 2);
 
-      //-------------------------
-      // Build K/pi ratio histogram
-      //-------------------------
+                    // NchTag = Sum(RecoPIDKaon>=2 || RecoPIDPion>=2 || RecoPIDProton>=2)
+                    if (isKaonTag || isPionTag || isProtonTag)
+                        ++NchTag;
 
-      hKoverPi = (TH1D*)hK->Clone("hKoverPi");
-      hKoverPi->SetTitle("K/#pi yield ratio vs N_{ch}^{tag};N_{ch}^{tag};K/#pi");
-      hKoverPi->Divide(hPi);
-   }
+                    if (isKaonTag)
+                        ++nK;
+                    if (isPionTag)
+                        ++nPi;
+                }
+            }
 
-   void writeHistograms()
-   {
-      if (outf == nullptr)
-         return;
+            // Put overflow NchTag into the last bin
+            if (NchTag > par.MaxNchTag)
+                NchTag = par.MaxNchTag;
 
-      outf->cd();
+            // Fill event-wise yields
+            hK->Fill(NchTag, nK);
+            hPi->Fill(NchTag, nPi);
+        }
 
-      smartWrite(hK);
-      smartWrite(hPi);
-      smartWrite(hKoverPi);
+        cout << endl << "Event loop finished." << endl;
 
-      TCanvas c1("c1", "K/pi vs NchTag", 800, 600);
-      hKoverPi->SetMarkerStyle(20);
-      hKoverPi->SetMarkerSize(1.0);
-      hKoverPi->Draw("E1");
-      c1.Write();  // store in ROOT file
-   }
+        //-------------------------
+        // Update titles depending on mode
+        //-------------------------
+        if (par.IsGen) {
+            hK->SetTitle ("Generator-level kaons vs N_{ch}^{tag};N_{ch}^{tag};N_{K}^{gen}");
+            hPi->SetTitle("Generator-level pions vs N_{ch}^{tag};N_{ch}^{tag};N_{#pi}^{gen}");
+        }
+        else {
+            hK->SetTitle ("Kaon candidates vs N_{ch}^{tag};N_{ch}^{tag};Yield (sum over events)");
+            hPi->SetTitle("Pion candidates vs N_{ch}^{tag};N_{ch}^{tag};Yield (sum over events)");
+        }
+
+        //-------------------------
+        // Build K/pi ratio histogram
+        //-------------------------
+
+        hKoverPi = (TH1D *)hK->Clone("hKoverPi");
+        if (par.IsGen)
+            hKoverPi->SetTitle("Generator-level K/#pi yield ratio vs N_{ch}^{tag};N_{ch}^{tag};K/#pi (gen)");
+        else
+            hKoverPi->SetTitle("K/#pi yield ratio vs N_{ch}^{tag};N_{ch}^{tag};K/#pi (reco)");
+
+        hKoverPi->Divide(hPi);
+    }
+
+    void writeHistograms() {
+        if (outf == nullptr)
+            return;
+
+        outf->cd();
+
+        smartWrite(hK);
+        smartWrite(hPi);
+        smartWrite(hKoverPi);
+
+        TCanvas c1("c1", "K/pi vs NchTag", 800, 600);
+        hKoverPi->SetMarkerStyle(20);
+        hKoverPi->SetMarkerSize(1.0);
+        hKoverPi->Draw("E1");
+        c1.Write(); // store in ROOT file
+    }
 };
 
-//============================================================//
+//============================================================
 // Main analysis
-//============================================================//
+//============================================================
 
-int main(int argc, char *argv[])
-{
-   // Use the same help-message pattern as CorrelationAnalysis.cpp
-//   if (printHelpMessage(argc, argv))
-//      return 0;
+int main(int argc, char *argv[]) {
+    // Use the same help-message pattern as CorrelationAnalysis.cpp
+    // if (printHelpMessage(argc, argv))
+    //     return 0;
 
-   CommandLine CL(argc, argv);
+    CommandLine CL(argc, argv);
 
-   KtoPiParameters par;
+    KtoPiParameters par;
 
-   // Basic I/O
-   par.input  = CL.Get("Input",  par.input);
-   par.output = CL.Get("Output", par.output);
+    // Basic I/O
+    par.input  = CL.Get("Input",  par.input);
+    par.output = CL.Get("Output", par.output);
 
-   // Physics / binning parameters
-   par.MaxNchTag = CL.GetInt   ("MaxNchTag", par.MaxNchTag);
-   par.MaxEvents = CL.GetInt   ("MaxEvents", par.MaxEvents);
-   par.EcmRef    = CL.GetDouble("EcmRef",    par.EcmRef);
-   par.MinNch    = CL.GetInt   ("MinNch",    par.MinNch);
+    // Physics / binning parameters
+    par.MaxNchTag = CL.GetInt   ("MaxNchTag", par.MaxNchTag);
+    par.MaxEvents = CL.GetInt   ("MaxEvents", par.MaxEvents);
+    par.EcmRef    = CL.GetDouble("EcmRef",    par.EcmRef);
+    par.MinNch    = CL.GetInt   ("MinNch",    par.MinNch);
 
-   double MinThetaDeg = CL.GetDouble("MinThetaDeg", 30.0);
-   double MaxThetaDeg = CL.GetDouble("MaxThetaDeg", 150.0);
+    double MinThetaDeg = CL.GetDouble("MinThetaDeg", 30.0);
+    double MaxThetaDeg = CL.GetDouble("MaxThetaDeg", 150.0);
 
-   par.MinTheta = MinThetaDeg * TMath::Pi() / 180.0;
-   par.MaxTheta = MaxThetaDeg * TMath::Pi() / 180.0;
+    par.MinTheta = MinThetaDeg * TMath::Pi() / 180.0;
+    par.MaxTheta = MaxThetaDeg * TMath::Pi() / 180.0;
 
-   cout << "Running KtoPiAnalysis with parameters:" << endl;
-   cout << "  Input       = " << par.input << endl;
-   cout << "  Output      = " << par.output << endl;
-   cout << "  MaxNchTag   = " << par.MaxNchTag << endl;
-   cout << "  MaxEvents   = " << par.MaxEvents << endl;
-   cout << "  EcmRef      = " << par.EcmRef << endl;
-   cout << "  MinNch      = " << par.MinNch << endl;
-   cout << "  MinThetaDeg = " << MinThetaDeg << endl;
-   cout << "  MaxThetaDeg = " << MaxThetaDeg << endl;
+    // Generator-level flag: IsGen=true/false or 1/0 or yes/no (case-insensitive)
+    std::string isGenStr = CL.Get("IsGen", std::string("false"));
+    if (isGenStr == "1"    || isGenStr == "true" || isGenStr == "True" ||
+        isGenStr == "TRUE" || isGenStr == "yes"  || isGenStr == "Yes"  ||
+        isGenStr == "YES") {
+        par.IsGen = true;
+    }
+    else {
+        par.IsGen = false;
+    }
 
-   KtoPiAnalyzer analyzer(par);
-   analyzer.analyze();
-   analyzer.writeHistograms();
+    cout << "Running KtoPiAnalysis with parameters:" << endl;
+    cout << "  Input       = " << par.input  << endl;
+    cout << "  Output      = " << par.output << endl;
+    cout << "  MaxNchTag   = " << par.MaxNchTag << endl;
+    cout << "  MaxEvents   = " << par.MaxEvents << endl;
+    cout << "  EcmRef      = " << par.EcmRef << endl;
+    cout << "  MinNch      = " << par.MinNch << endl;
+    cout << "  MinThetaDeg = " << MinThetaDeg << endl;
+    cout << "  MaxThetaDeg = " << MaxThetaDeg << endl;
+    cout << "  IsGen       = " << (par.IsGen ? "true" : "false") << endl;
 
-   cout << "Done. Output written to " << par.output << endl;
+    KtoPiAnalyzer analyzer(par);
+    analyzer.analyze();
+    analyzer.writeHistograms();
 
-   return 0;
+    cout << "Done. Output written to " << par.output << endl;
+    return 0;
 }
