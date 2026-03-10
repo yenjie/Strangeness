@@ -112,6 +112,10 @@ int main(int argc, char* argv[]) {
       "hKStarSBMassKaonPionTag",
       "K^{*} same-event reco pairs, kaon+pion-tag; m(K#pi) [GeV]; Assignments / bin",
       kMassBins, massMin, massMax);
+  TH1D hMassDoubleKaonTag(
+      "hKStarSBMassDoubleKaonTag",
+      "K^{*} same-event reco pairs, two-kaon-tag; m(K#pi) [GeV]; Assignments / bin",
+      kMassBins, massMin, massMax);
   TH1D hMassAccepted(
       "hKStarSBMassAccepted",
       "K^{*} same-event reco OS pairs, accepted; m(K#pi) [GeV]; Assignments / bin",
@@ -123,6 +127,7 @@ int main(int argc, char* argv[]) {
   long long negativeKaonAssignments = 0;
   long long countKaonTag = 0;
   long long countKaonPionTag = 0;
+  long long countDoubleKaonTag = 0;
 
   const long long entryCount = tree->GetEntries();
   for (long long entry = 0; entry < entryCount; ++entry) {
@@ -154,6 +159,10 @@ int main(int argc, char* argv[]) {
         if (positive->kaonTag >= kKaonTagThreshold) {
           hMassKaonTag.Fill(positiveKaonMass);
           countKaonTag++;
+          if (negative->kaonTag >= kKaonTagThreshold) {
+            hMassDoubleKaonTag.Fill(positiveKaonMass);
+            countDoubleKaonTag++;
+          }
           if (negative->pionTag >= kPionTagThreshold) {
             hMassKaonPionTag.Fill(positiveKaonMass);
             countKaonPionTag++;
@@ -166,6 +175,10 @@ int main(int argc, char* argv[]) {
         if (negative->kaonTag >= kKaonTagThreshold) {
           hMassKaonTag.Fill(negativeKaonMass);
           countKaonTag++;
+          if (positive->kaonTag >= kKaonTagThreshold) {
+            hMassDoubleKaonTag.Fill(negativeKaonMass);
+            countDoubleKaonTag++;
+          }
           if (positive->pionTag >= kPionTagThreshold) {
             hMassKaonPionTag.Fill(negativeKaonMass);
             countKaonPionTag++;
@@ -178,6 +191,7 @@ int main(int argc, char* argv[]) {
   TFile outputFile(outputFileName.c_str(), "RECREATE");
   hMassKaonTag.Write();
   hMassKaonPionTag.Write();
+  hMassDoubleKaonTag.Write();
   hMassAccepted.Write();
 
   TNamed selection(
@@ -196,6 +210,7 @@ int main(int argc, char* argv[]) {
   TParameter<long long>("NegativeKaonAssignments", negativeKaonAssignments).Write();
   TParameter<long long>("CountKaonTag", countKaonTag).Write();
   TParameter<long long>("CountKaonPionTag", countKaonPionTag).Write();
+  TParameter<long long>("CountDoubleKaonTag", countDoubleKaonTag).Write();
   TParameter<double>("MassMin", massMin).Write();
   TParameter<double>("MassMax", massMax).Write();
   outputFile.Close();
@@ -207,5 +222,6 @@ int main(int argc, char* argv[]) {
   std::cout << "  Negative-kaon fills:     " << negativeKaonAssignments << std::endl;
   std::cout << "  Kaon-tag assignments:    " << countKaonTag << std::endl;
   std::cout << "  Kaon+pion assignments:   " << countKaonPionTag << std::endl;
+  std::cout << "  Two-kaon assignments:    " << countDoubleKaonTag << std::endl;
   return 0;
 }
