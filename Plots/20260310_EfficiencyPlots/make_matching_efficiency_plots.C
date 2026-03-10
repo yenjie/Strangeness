@@ -13,6 +13,26 @@ void StyleHistogram(TH2D *H, const char *ZTitle)
    H->GetZaxis()->CenterTitle();
 }
 
+TGraph *MakePTThresholdGraph(double PTMin)
+{
+   const int N = 400;
+   TGraph *G = new TGraph;
+   for(int i = 0; i < N; i++)
+   {
+      double CosTheta = -0.999 + (1.998 / (N - 1)) * i;
+      double SinTheta = sqrt(1.0 - CosTheta * CosTheta);
+      if(SinTheta <= 0)
+         continue;
+      double P = PTMin / SinTheta;
+      G->SetPoint(G->GetN(), CosTheta, P);
+   }
+
+   G->SetLineColor(kRed + 1);
+   G->SetLineWidth(2);
+   G->SetLineStyle(2);
+   return G;
+}
+
 void DrawOne(TFile &File, const char *DenominatorName, const char *NumeratorName,
    const char *HistogramName, const char *Title, const char *OutputBase)
 {
@@ -33,9 +53,12 @@ void DrawOne(TFile &File, const char *DenominatorName, const char *NumeratorName
    Canvas.SetBottomMargin(0.12);
 
    Efficiency->Draw("colz");
+   TGraph *Threshold = MakePTThresholdGraph(0.4);
+   Threshold->Draw("l same");
    Canvas.SaveAs(Form("%s.pdf", OutputBase));
    Canvas.SaveAs(Form("%s.png", OutputBase));
 
+   delete Threshold;
    delete Efficiency;
 }
 
