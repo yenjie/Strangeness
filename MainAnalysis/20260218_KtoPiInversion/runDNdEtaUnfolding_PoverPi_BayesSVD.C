@@ -318,7 +318,8 @@ void runPtoPi_DNdEtaUnfolding_PoverPi_BayesSVD(int nIterBayes = 1,
                                  const char *dataFile = "output/KtoPi-Data-Reco-Nominal.root",
                                  const char *outRoot = "output/PtoPi_PtoPi_DNdEtaUnfolding_BayesSVD.root",
                                  const char *responseFile = "",
-                                 bool makePlots = true)
+                                 bool makePlots = true,
+                                 int keepBinsOverride = -1)
 {
    gStyle->SetOptStat(0);
    gStyle->SetPalette(kViridis);
@@ -395,9 +396,12 @@ void runPtoPi_DNdEtaUnfolding_PoverPi_BayesSVD(int nIterBayes = 1,
       return;
    }
 
-   const int keepBins = DetermineOverflowKeepBins(hRecoCountsFine, 100.0);
-   printf("dN/deta overflow treatment: collapsing bins %d..%d into final visible bin %d\n",
-          keepBins, hRecoCountsFine->GetNbinsX(), keepBins);
+   const int keepBinsAuto = DetermineOverflowKeepBins(hRecoCountsFine, 100.0);
+   const int keepBins = (keepBinsOverride > 0)
+      ? std::max(1, std::min(keepBinsOverride, hRecoCountsFine->GetNbinsX()))
+      : keepBinsAuto;
+   printf("dN/deta overflow treatment: auto keepBins=%d, using keepBins=%d, collapsing bins %d..%d into final visible bin %d\n",
+          keepBinsAuto, keepBins, keepBins, hRecoCountsFine->GetNbinsX(), keepBins);
 
    TH1D *hPMcRecoCollapsed = CollapseTail1D(hPMcReco, keepBins, "hPMcRecoCollapsed_dNdEta");
    TH1D *hPiMcRecoCollapsed = CollapseTail1D(hPiMcReco, keepBins, "hPiMcRecoCollapsed_dNdEta");
@@ -624,7 +628,12 @@ void runPtoPi_DNdEtaUnfolding_PoverPi_BayesSVD(int nIterBayes = 1,
 // Keep the historical macro entry point aligned with the filename so batch
 // runners can call this macro without special-case naming logic.
 void runDNdEtaUnfolding_PoverPi_BayesSVD(int nIterBayes = 1,
-                                         int kRegSVD = 6)
+                                         int kRegSVD = 6,
+                                         int keepBinsOverride = -1)
 {
-   runPtoPi_DNdEtaUnfolding_PoverPi_BayesSVD(nIterBayes, kRegSVD);
+   runPtoPi_DNdEtaUnfolding_PoverPi_BayesSVD(nIterBayes, kRegSVD,
+                                             "output/KtoPi-MC-Reco-Nominal.root",
+                                             "output/KtoPi-Data-Reco-Nominal.root",
+                                             "output/PtoPi_PtoPi_DNdEtaUnfolding_BayesSVD.root",
+                                             "", true, keepBinsOverride);
 }

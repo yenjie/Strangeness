@@ -376,7 +376,8 @@ void runDNdEtaUnfolding_BayesSVD(int nIterBayes = 1,
                                  const char *dataFile = "output/KtoPi-Data-Reco-Nominal.root",
                                  const char *outRoot = "output/DNdEtaUnfolding_BayesSVD.root",
                                  const char *responseFile = "",
-                                 bool makePlots = true)
+                                 bool makePlots = true,
+                                 int keepBinsOverride = -1)
 {
    gStyle->SetOptStat(0);
    gStyle->SetPalette(kViridis);
@@ -453,9 +454,12 @@ void runDNdEtaUnfolding_BayesSVD(int nIterBayes = 1,
       return;
    }
 
-   const int keepBins = DetermineOverflowKeepBins(hRecoCountsFine, 100.0);
-   printf("dN/deta overflow treatment: collapsing bins %d..%d into final visible bin %d\n",
-          keepBins, hRecoCountsFine->GetNbinsX(), keepBins);
+   const int keepBinsAuto = DetermineOverflowKeepBins(hRecoCountsFine, 100.0);
+   const int keepBins = (keepBinsOverride > 0)
+      ? std::max(1, std::min(keepBinsOverride, hRecoCountsFine->GetNbinsX()))
+      : keepBinsAuto;
+   printf("dN/deta overflow treatment: auto keepBins=%d, using keepBins=%d, collapsing bins %d..%d into final visible bin %d\n",
+          keepBinsAuto, keepBins, keepBins, hRecoCountsFine->GetNbinsX(), keepBins);
 
    TH1D *hKMcRecoCollapsed = CollapseTail1D(hKMcReco, keepBins, "hKMcRecoCollapsed_dNdEta");
    TH1D *hPiMcRecoCollapsed = CollapseTail1D(hPiMcReco, keepBins, "hPiMcRecoCollapsed_dNdEta");

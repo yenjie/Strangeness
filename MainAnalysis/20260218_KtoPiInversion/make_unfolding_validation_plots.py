@@ -65,6 +65,16 @@ def build_ratio_hist(num, den, name):
     return h
 
 
+def make_bin_shading(hist, bin_index, ymin, ymax, color=ROOT.kOrange + 1, alpha=0.12):
+    x1 = hist.GetXaxis().GetBinLowEdge(bin_index)
+    x2 = hist.GetXaxis().GetBinUpEdge(bin_index)
+    box = ROOT.TBox(x1, ymin, x2, ymax)
+    box.SetFillColorAlpha(color, alpha)
+    box.SetLineColor(color)
+    box.SetLineStyle(2)
+    return box
+
+
 def draw_species_refold_column(
     canvas,
     x1,
@@ -77,6 +87,8 @@ def draw_species_refold_column(
     xtitle,
     ratio_min=0.90,
     ratio_max=1.10,
+    highlight_last_bin=False,
+    top_logy=False,
 ):
     top = ROOT.TPad(f"top_{title}_{x1}", "", x1, 0.30, x2, 1.0)
     bot = ROOT.TPad(f"bot_{title}_{x1}", "", x1, 0.00, x2, 0.30)
@@ -93,6 +105,8 @@ def draw_species_refold_column(
 
     top.cd()
     top.SetTicks(1, 1)
+    if top_logy:
+        top.SetLogy()
     mmc = measured_mc.Clone(f"{measured_mc.GetName()}_{title}_top")
     rmc = refolded_mc.Clone(f"{refolded_mc.GetName()}_{title}_top")
     mdata = measured_data.Clone(f"{measured_data.GetName()}_{title}_top")
@@ -103,11 +117,17 @@ def draw_species_refold_column(
     style_hist(rdata, ROOT.kGreen + 2, 25)
     max_y = 1.25 * max(mmc.GetMaximum(), rmc.GetMaximum(), mdata.GetMaximum(), rdata.GetMaximum())
     min_y = 0.85 * min_positive(mmc, rmc, mdata, rdata)
+    if top_logy:
+        min_y = 0.6 * min_positive(mmc, rmc, mdata, rdata)
     mmc.SetMinimum(min_y)
     mmc.SetMaximum(max_y)
     mmc.SetTitle(title)
     style_axis_top(mmc, "Species yield in reco space")
     mmc.Draw("E1")
+    top_box = None
+    if highlight_last_bin:
+        top_box = make_bin_shading(mmc, mmc.GetNbinsX(), min_y, max_y)
+        top_box.Draw("SAME")
     rmc.Draw("E1 SAME")
     mdata.Draw("E1 SAME")
     rdata.Draw("E1 SAME")
@@ -137,6 +157,19 @@ def draw_species_refold_column(
     rmc_ratio.SetTitle("")
     style_axis_ratio(rmc_ratio, xtitle)
     rmc_ratio.Draw("E1")
+    bot_box = None
+    tail_lab = None
+    if highlight_last_bin:
+        bot_box = make_bin_shading(rmc_ratio, rmc_ratio.GetNbinsX(), ratio_min, ratio_max)
+        bot_box.Draw("SAME")
+        tail_lab = ROOT.TLatex()
+        tail_lab.SetNDC()
+        tail_lab.SetTextSize(0.046)
+        probe_bin = min(7, rdata_ratio.GetNbinsX())
+        tail_lab.DrawLatex(
+            0.16, 0.84,
+            f"Data tail: bin {probe_bin}={rdata_ratio.GetBinContent(probe_bin):.2f}, last={rdata_ratio.GetBinContent(rdata_ratio.GetNbinsX()):.2f}"
+        )
     line = ROOT.TLine(rmc_ratio.GetXaxis().GetXmin(), 1.0, rmc_ratio.GetXaxis().GetXmax(), 1.0)
     line.SetLineStyle(2)
     line.SetLineWidth(2)
@@ -147,7 +180,7 @@ def draw_species_refold_column(
     return {
         "mc_rms": rms_distance_from_unity(rmc_ratio),
         "data_rms": rms_distance_from_unity(rdata_ratio),
-    }, [top, bot, mmc, rmc, mdata, rdata, lab, leg, rmc_ratio, rdata_ratio, line]
+    }, [top, bot, mmc, rmc, mdata, rdata, lab, leg, rmc_ratio, rdata_ratio, line, top_box, bot_box, tail_lab]
 
 
 def make_refolding_figure(root_path, xtitle, out_name, names, ratio_min=0.90, ratio_max=1.10):
@@ -162,6 +195,8 @@ def make_refolding_figure(root_path, xtitle, out_name, names, ratio_min=0.90, ra
         "Kaon refolding", xtitle,
         ratio_min=ratio_min,
         ratio_max=ratio_max,
+        highlight_last_bin=(out_name == "DNdEtaUnfolding_RefoldingValidation"),
+        top_logy=(out_name == "DNdEtaUnfolding_RefoldingValidation"),
     )
     keep.extend(keep_k)
     metrics_pi, keep_pi = draw_species_refold_column(
@@ -173,6 +208,8 @@ def make_refolding_figure(root_path, xtitle, out_name, names, ratio_min=0.90, ra
         "Pion refolding", xtitle,
         ratio_min=ratio_min,
         ratio_max=ratio_max,
+        highlight_last_bin=(out_name == "DNdEtaUnfolding_RefoldingValidation"),
+        top_logy=(out_name == "DNdEtaUnfolding_RefoldingValidation"),
     )
     keep.extend(keep_pi)
     c._keepalive = keep
@@ -184,6 +221,43 @@ def make_refolding_figure(root_path, xtitle, out_name, names, ratio_min=0.90, ra
         "K": metrics_k,
         "Pi": metrics_pi,
     }
+
+
+def make_ratio_refolding_figure(root_path, xtitle, out_name):
+    h_mc = get_hist(root_path, "hRefoldRecoClosureMc_dNdEta")
+    h_data = get_hist(root_path, "hRefoldRecoClosureData_dNdEta")
+    c = ROOT.TCanvas(f"c_{out_name}", "", 900, 650)
+    c.SetTicks(1, 1)
+    style_hist(h_mc, ROOT.kAzure + 1, 20)
+    style_hist(h_data, ROOT.kRed + 1, 21)
+    h_mc.SetMinimum(0.90)
+    h_mc.SetMaximum(1.10)
+    h_mc.SetTitle("")
+    style_axis_ratio(h_mc, xtitle)
+    h_mc.GetYaxis().SetTitle("(K/#pi)_{refolded}/(K/#pi)_{reco}")
+    h_mc.GetYaxis().SetTitleSize(0.050)
+    h_mc.GetYaxis().SetLabelSize(0.046)
+    h_mc.GetXaxis().SetTitleSize(0.050)
+    h_mc.GetXaxis().SetLabelSize(0.046)
+    h_mc.Draw("E1")
+    shade = make_bin_shading(h_mc, h_mc.GetNbinsX(), 0.90, 1.10)
+    shade.Draw("SAME")
+    line = ROOT.TLine(h_mc.GetXaxis().GetXmin(), 1.0, h_mc.GetXaxis().GetXmax(), 1.0)
+    line.SetLineStyle(2)
+    line.SetLineWidth(2)
+    line.Draw("SAME")
+    h_mc.Draw("E1 SAME")
+    h_data.Draw("E1 SAME")
+    leg = ROOT.TLegend(0.18, 0.77, 0.62, 0.90)
+    leg.SetBorderSize(0)
+    leg.SetFillStyle(0)
+    leg.SetTextSize(0.040)
+    leg.AddEntry(h_mc, "MC ratio refolding", "lep")
+    leg.AddEntry(h_data, "Data ratio refolding", "lep")
+    leg.Draw()
+    c._keepalive = [h_mc, h_data, shade, line, leg]
+    c.SaveAs(os.path.join(OUTDIR, out_name + ".pdf"))
+    c.SaveAs(os.path.join(OUTDIR, out_name + ".png"))
 
 
 def make_stress_figure(root_path_ntag, root_path_dndeta):
@@ -198,6 +272,7 @@ def make_stress_figure(root_path_ntag, root_path_dndeta):
         c, 0.50, 1.00, root_path_dndeta,
         "hRatioStressTruth_dNdEta", "hRatioStressUnfold_dNdEta", "hStressClosure_dNdEta",
         "Injected shape test: dN_{ch}/d#eta", "True dN_{ch}/d#eta (|#eta|<0.5)",
+        highlight_last_bin=True,
     ))
     c._keepalive = keep
     c.Update()
@@ -205,7 +280,7 @@ def make_stress_figure(root_path_ntag, root_path_dndeta):
     c.SaveAs(os.path.join(OUTDIR, "UnfoldingStressTest_Combined.png"))
 
 
-def draw_stress_column(canvas, x1, x2, root_path, truth_name, unfold_name, ratio_name, title, xtitle):
+def draw_stress_column(canvas, x1, x2, root_path, truth_name, unfold_name, ratio_name, title, xtitle, highlight_last_bin=False):
     truth = get_hist(root_path, truth_name)
     unfold = get_hist(root_path, unfold_name)
     ratio = get_hist(root_path, ratio_name)
@@ -231,6 +306,10 @@ def draw_stress_column(canvas, x1, x2, root_path, truth_name, unfold_name, ratio
     truth.SetTitle(title)
     style_axis_top(truth, "K/#pi on true axis")
     truth.Draw("E1")
+    top_box = None
+    if highlight_last_bin:
+        top_box = make_bin_shading(truth, truth.GetNbinsX(), truth.GetMinimum(), truth.GetMaximum())
+        top_box.Draw("SAME")
     unfold.Draw("E1 SAME")
     lab = ROOT.TLatex()
     lab.SetNDC()
@@ -243,6 +322,10 @@ def draw_stress_column(canvas, x1, x2, root_path, truth_name, unfold_name, ratio
     leg.AddEntry(truth, "Injected truth", "lep")
     leg.AddEntry(unfold, "Unfolded result", "lep")
     leg.Draw()
+    rms_lab = ROOT.TLatex()
+    rms_lab.SetNDC()
+    rms_lab.SetTextSize(0.050)
+    rms_lab.DrawLatex(0.18, 0.67, f"RMS = {rms_distance_from_unity(ratio):.3f}")
 
     bot.cd()
     style_hist(ratio, ROOT.kBlue + 1, 20)
@@ -251,13 +334,17 @@ def draw_stress_column(canvas, x1, x2, root_path, truth_name, unfold_name, ratio
     ratio.SetTitle("")
     style_axis_ratio(ratio, xtitle)
     ratio.Draw("E1")
+    bot_box = None
+    if highlight_last_bin:
+        bot_box = make_bin_shading(ratio, ratio.GetNbinsX(), 0.85, 1.15)
+        bot_box.Draw("SAME")
     line = ROOT.TLine(ratio.GetXaxis().GetXmin(), 1.0, ratio.GetXaxis().GetXmax(), 1.0)
     line.SetLineStyle(2)
     line.SetLineWidth(2)
     line.Draw("SAME")
     ratio.Draw("E1 SAME")
     canvas.cd()
-    return [top, bot, truth, unfold, ratio, lab, leg, line]
+    return [top, bot, truth, unfold, ratio, lab, leg, line, top_box, bot_box, rms_lab]
 
 
 def min_positive(*hists):
@@ -302,6 +389,8 @@ def build_migration_metrics(response_path, hist_k, hist_pi, axis_tag):
                 "species": label,
                 "bin": ib,
                 "center": h.GetXaxis().GetBinCenter(ib),
+                "low_edge": h.GetXaxis().GetBinLowEdge(ib),
+                "up_edge": h.GetXaxis().GetBinUpEdge(ib),
                 "purity": purity,
                 "stability": stability,
             })
@@ -328,9 +417,15 @@ def make_migration_metrics_plot(rows):
                 ys = [row[metric] for row in axis_rows[species]]
                 ax.plot(xs, ys, **style_map[(species, metric)])
         ax.set_ylim(0.0, 1.05)
+        ax.axhline(0.3, color="gray", linestyle=":", linewidth=1.2, alpha=0.8)
+        ax.axhline(0.5, color="gray", linestyle=":", linewidth=1.2, alpha=0.8)
         ax.set_ylabel("Fraction")
         ax.set_xlabel("True $N_{ch}^{tag}$" if axis == "Ntag" else "True $dN_{ch}/d\\eta$ ($|\\eta|<0.5$)")
         ax.set_title(f"{axis} migration metrics")
+        if axis == "dNdEta":
+            last_row = axis_rows["K"][-1]
+            ax.axvspan(last_row["low_edge"], last_row["up_edge"], color="#ff7f0e", alpha=0.10)
+            ax.text(last_row["center"], 0.08, "overflow bin", rotation=90, ha="center", va="bottom", fontsize=10)
         ax.grid(alpha=0.25)
         ax.legend(frameon=False, ncols=2, fontsize=10)
     fig.savefig(os.path.join(OUTDIR, "MigrationMetrics_PurityStability.pdf"))
@@ -417,6 +512,11 @@ def main():
         },
         ratio_min=0.00,
         ratio_max=1.20,
+    )
+    make_ratio_refolding_figure(
+        dndeta_root,
+        "dN_{ch}^{reco}/d#eta (|#eta|<0.5)",
+        "DNdEtaUnfolding_RatioRefoldingValidation",
     )
     make_stress_figure(ntag_root, dndeta_root)
 

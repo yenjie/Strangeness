@@ -111,6 +111,14 @@ and pion reco spectra directly to the measured reco spectra. The smaller RMS
 values above apply only to the ratio-level `K/pi` validation, where kaon and
 pion distortions partially cancel.
 
+An explicit companion ratio-level refolding figure is now produced in addition
+to the species-level refolding figure:
+- `result/20260310/unfolding_validation/DNdEtaUnfolding_RatioRefoldingValidation.pdf`
+
+This separation is intentional. The ratio-level `K/\pi` refolding is the metric
+relevant to the quoted final observable, while the species-level kaon and pion
+refolding remains the stricter ingredient-level validation.
+
 Other diagnostics:
 - `hClosureBayes_dNdEta` RMS: `0.02311`
 - `hStressClosure_dNdEta` RMS: `0.08326`
@@ -130,6 +138,22 @@ Interpretation:
   in the high-activity tail
 - the dominant residual limitation is the final merged overflow bin, but the
   species-level drop already becomes visible from about bin 6 onward
+
+### Explicit tail-resolution path
+The next technical step is now treated as a scanned parameter study rather than
+as a hidden heuristic.
+
+- the unfolding macro accepts an explicit `keepBins` override
+- the intended scan is `keepBins = 8, 9, 10`
+- the acceptance rule is:
+  1. ratio-level `K/\pi` refolding remains acceptable
+  2. species-level kaon and pion tail bins no longer collapse catastrophically
+  3. final merged-bin purity and stability improve beyond the current
+     marginal `0.20-0.25` range
+
+If no reasonable `keepBins` choice satisfies those criteria, the last
+`dN_{ch}/d\eta` point should be downgraded to an explicitly cautionary overflow
+bin or removed from the quoted physics interpretation.
 
 ### Migration quality summary
 From `result/20260310/unfolding_validation/migration_metrics.csv`:
@@ -164,6 +188,7 @@ The following note-facing figures were regenerated from the updated chain:
 - `DNdEtaUnfolding_MCClosure_BayesVsSVD.pdf`
 - `DNdEtaUnfolding_DataMC_BayesVsSVD.pdf`
 - `DNdEtaUnfolding_RefoldingValidation.pdf`
+- `DNdEtaUnfolding_RatioRefoldingValidation.pdf`
 - `KtoPi_DoubleRatio_vs_dNdEta_with_Systematics.pdf`
 - `KtoPi_vs_dNdEta_DataMC_with_Systematics.pdf`
 - `KtoPi_vs_dNdEta_DELPHI_vs_ALICE.pdf`
@@ -181,6 +206,8 @@ The following note-facing figures were regenerated from the updated chain:
 The analysis note caption for the `dN_{ch}/d\eta` refolding validation figure was updated to match the current implementation:
 - reco and truth are both defined in `|eta| < 0.5`
 - the main remaining limitation is the merged overflow tail, not the old proxy-definition mismatch
+- the note now separates the species-level refolding figure from the ratio-level
+  `K/\pi` refolding companion figure and states the concrete tail-resolution path
 
 File:
 - [overleaf_repo_git/main.tex](../overleaf_repo_git/main.tex)
