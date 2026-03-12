@@ -65,7 +65,19 @@ def build_ratio_hist(num, den, name):
     return h
 
 
-def draw_species_refold_column(canvas, x1, x2, measured_mc, refolded_mc, measured_data, refolded_data, title, xtitle):
+def draw_species_refold_column(
+    canvas,
+    x1,
+    x2,
+    measured_mc,
+    refolded_mc,
+    measured_data,
+    refolded_data,
+    title,
+    xtitle,
+    ratio_min=0.90,
+    ratio_max=1.10,
+):
     top = ROOT.TPad(f"top_{title}_{x1}", "", x1, 0.30, x2, 1.0)
     bot = ROOT.TPad(f"bot_{title}_{x1}", "", x1, 0.00, x2, 0.30)
     top.SetBottomMargin(0.02)
@@ -120,8 +132,8 @@ def draw_species_refold_column(canvas, x1, x2, measured_mc, refolded_mc, measure
     rdata_ratio = build_ratio_hist(refolded_data, measured_data, f"{refolded_data.GetName()}_{title}_ratio_data")
     style_hist(rmc_ratio, ROOT.kAzure + 1, 20)
     style_hist(rdata_ratio, ROOT.kRed + 1, 21)
-    rmc_ratio.SetMinimum(0.90)
-    rmc_ratio.SetMaximum(1.10)
+    rmc_ratio.SetMinimum(ratio_min)
+    rmc_ratio.SetMaximum(ratio_max)
     rmc_ratio.SetTitle("")
     style_axis_ratio(rmc_ratio, xtitle)
     rmc_ratio.Draw("E1")
@@ -138,7 +150,7 @@ def draw_species_refold_column(canvas, x1, x2, measured_mc, refolded_mc, measure
     }, [top, bot, mmc, rmc, mdata, rdata, lab, leg, rmc_ratio, rdata_ratio, line]
 
 
-def make_refolding_figure(root_path, xtitle, out_name, names):
+def make_refolding_figure(root_path, xtitle, out_name, names, ratio_min=0.90, ratio_max=1.10):
     c = ROOT.TCanvas(f"c_refold_{out_name}", "", 1400, 700)
     keep = []
     metrics_k, keep_k = draw_species_refold_column(
@@ -148,6 +160,8 @@ def make_refolding_figure(root_path, xtitle, out_name, names):
         get_hist(root_path, names["k_measured_data"]),
         get_hist(root_path, names["k_refold_data"]),
         "Kaon refolding", xtitle,
+        ratio_min=ratio_min,
+        ratio_max=ratio_max,
     )
     keep.extend(keep_k)
     metrics_pi, keep_pi = draw_species_refold_column(
@@ -157,6 +171,8 @@ def make_refolding_figure(root_path, xtitle, out_name, names):
         get_hist(root_path, names["pi_measured_data"]),
         get_hist(root_path, names["pi_refold_data"]),
         "Pion refolding", xtitle,
+        ratio_min=ratio_min,
+        ratio_max=ratio_max,
     )
     keep.extend(keep_pi)
     c._keepalive = keep
@@ -382,6 +398,8 @@ def main():
             "pi_measured_data": "hPiDataReco",
             "pi_refold_data": "hPiDataBayesRefold",
         },
+        ratio_min=0.70,
+        ratio_max=1.30,
     )
     refold_dndeta = make_refolding_figure(
         dndeta_root,
@@ -397,6 +415,8 @@ def main():
             "pi_measured_data": "hPiDataReco",
             "pi_refold_data": "hPiDataBayesRefold_dNdEta",
         },
+        ratio_min=0.00,
+        ratio_max=1.20,
     )
     make_stress_figure(ntag_root, dndeta_root)
 
