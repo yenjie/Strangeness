@@ -17,8 +17,11 @@ SF_RATIO = SF_K / SF_PI
 SF_RATIO_REL_ERR = math.sqrt((SF_K_ERR / SF_K) ** 2 + (SF_PI_ERR / SF_PI) ** 2)
 
 TOY_COVERAGE_CSV = os.environ.get(
-    "KPI_TOY_COVERAGE_CSV",
-    "result/20260312/reviewer_followup_validation/toy_coverage/toy_coverage_bins.csv",
+    "KPI_DNDY_TOY_COVERAGE_CSV",
+    os.environ.get(
+        "KPI_TOY_COVERAGE_CSV",
+        "result/20260314/dndy_toy_coverage/toy_coverage_bins.csv",
+    ),
 )
 DNDY_DIR = os.environ.get("KPI_DNDY_DIR", "output/systematics_20260314_dndy")
 OUT_DIR = os.environ.get("KPI_DNDY_TOP_PLOTS_DIR", "result/20260314/top_plots_dndy")

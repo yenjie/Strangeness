@@ -38,8 +38,13 @@
 These match the currently quoted `dN_ch/deta` branch strategy: binning envelope plus residual, unfolding, and PID-SF propagation.
 
 ## Statistical treatment
-- No dedicated `dN/dy` toy-coverage calibration was run in this update.
-- The current `dN/dy` note figures therefore use the nominal Bayes propagated bin errors.
+- A dedicated `dN/dy` toy-coverage calibration was run in:
+  - `result/20260314/dndy_toy_coverage/`
+- The toy study shows the same qualitative failure mode as the `Ntag` and
+  `dN_ch/deta` branches: the raw diagonal Bayes errors under-cover badly,
+  especially in the sparse tail.
+- The current `dN/dy` note figures therefore use the toy-calibrated per-bin
+  absolute RMSE rather than the nominal Bayes propagated bin errors.
 - This is recorded in:
   - `output/systematics_20260314_dndy/systematics_dndy_table.txt`
   - `output/systematics_20260314_dndy/systematics_dndy_summary.root` via `dNdYStatTreatment`
@@ -56,6 +61,10 @@ These match the currently quoted `dN_ch/deta` branch strategy: binning envelope 
   - `result/20260314/top_plots_dndy/DNdYUnfolding_MethodDifference.pdf`
   - `result/20260314/top_plots_dndy/DNdYUnfolding_MCClosure_BayesVsSVD.pdf`
   - `result/20260314/top_plots_dndy/DNdYUnfolding_DataMC_BayesVsSVD.pdf`
+  - `result/20260314/dndy_toy_coverage/DNdYToyCoverage_Summary.pdf`
+- Generator comparisons:
+  - `result/20260314/top_plots_dndy/KtoPi_vs_dNdY_DELPHI_vs_Generators.pdf`
+  - `result/20260314/top_plots_dndy/Generator_dNdY_Comparison.pdf`
 
 ## Note integration
 - Added a dedicated results subsection to:
@@ -67,5 +76,8 @@ These match the currently quoted `dN_ch/deta` branch strategy: binning envelope 
 
 ## Current limitations
 - The highest-activity `dN_ch/dy` bin is still the merged overflow bin from `keepBins=8`.
-- The statistical treatment is weaker than the main `dN_ch/deta` branch until a dedicated `dN/dy` toy study is added.
+- The thrust-axis generator comparison currently excludes standalone PYTHIA6 and
+  X-SCAPE/JETSCAPE because the local saved outputs for those studies only
+  retain event-level multiplicity summaries and not the particle-level
+  four-vectors needed to reconstruct `y_T` offline.
 - There is no external heavy-ion or pp comparison overlay for the thrust-axis variable, because those experiments do not report the same observable definition.
