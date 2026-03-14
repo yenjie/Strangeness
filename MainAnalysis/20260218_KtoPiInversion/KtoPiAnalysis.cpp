@@ -15,6 +15,10 @@
 //      - raw reconstructed pT spectra (K, pi, p)
 //      - PID–corrected pT spectra via 3×3 matrix inversion
 //      - pT–integrated yields and K/pi, p/pi vs Nch_tag
+//  * Optional PID observation mode:
+//      - exclusive: one observed tag per track (legacy K > pi > p tie rule)
+//      - inclusive: every species with PID score >= 2 is filled, so duplicate
+//        candidate counts are allowed in the raw spectra
 //
 // The existing generator–level mode (IsGen=true) is kept:
 // we still count K/π/p at truth level as a cross–check.
@@ -86,11 +90,13 @@ struct KtoPiParameters
 
    bool   IsGen;       // if true, count K/pi/p at generator level
    bool   UseMCTruthMatrix;  // if true, build PID matrix from MC truth matching (closure mode)
+   bool   UsePassAllSelection; // if true, use archived event-selection bit instead of recomputing cuts
    bool   UseCentralEtaNtag; // if true, define reco Ntag using |eta|<0.5 tracks
    bool   UsePIDFiducial;    // if true, apply track-level PID fiducial in |cos(theta_track)|
    double PIDTrackAbsCosMin; // lower edge for |cos(theta_track)|
    double PIDTrackAbsCosMax; // upper edge for |cos(theta_track)|
    int    PIDTieMode;        // 0=legacy priority K>pi>p, 1=ties become untagged
+   bool   UseInclusivePIDObservation; // if true, fill all K/pi/p candidates with PID>=2
 
    // pT binning
    int    NPtBins;           // number of pT bins (uniform mode)
@@ -100,7 +106,7 @@ struct KtoPiParameters
    std::vector<double> PtBinEdges;  // if non-empty, overrides NPtBins/PtMin/PtMax
 
    KtoPiParameters()
-      : input("sample/Strangeness/merged_mc_v2.root")
+      : input("sample/Strangeness/merged_pythia_v2.5.root")
       , output("output/KtoPi.root")
       , MaxNchTag(60)
       , MaxEvents(-1)
@@ -110,11 +116,13 @@ struct KtoPiParameters
       , MaxTheta(150.0 * TMath::Pi() / 180.0)
       , IsGen(false)
       , UseMCTruthMatrix(false)
+      , UsePassAllSelection(true)
       , UseCentralEtaNtag(false)
       , UsePIDFiducial(true)
       , PIDTrackAbsCosMin(0.15)
       , PIDTrackAbsCosMax(0.675)
       , PIDTieMode(0)
+      , UseInclusivePIDObservation(false)
       , NPtBins(12)
       , PtMin(0.4)
       , PtMax(5.0)
@@ -142,6 +150,23 @@ static bool IsChargedPDG(long long pdg)
 
    cache[apdg] = charged;
    return charged;
+}
+
+static bool ComputeAxisRapidity(double px, double py, double pz, double e,
+                                double ax, double ay, double az, double &rapidity)
+{
+   const double norm = std::sqrt(ax * ax + ay * ay + az * az);
+   if (norm <= 0.0 || e <= 0.0)
+      return false;
+
+   const double pLong = (px * ax + py * ay + pz * az) / norm;
+   const double plus = e + pLong;
+   const double minus = e - pLong;
+   if (plus <= 0.0 || minus <= 0.0)
+      return false;
+
+   rapidity = 0.5 * std::log(plus / minus);
+   return std::isfinite(rapidity);
 }
 
 //============================================================
@@ -187,6 +212,16 @@ public:
    TH1D *hPCorrectedDNdEta;
    TH1D *hKoverPiCorrectedDNdEta;
    TH1D *hPoverPiCorrectedDNdEta;
+   TH1D *hKDNdY;
+   TH1D *hPiDNdY;
+   TH1D *hPDNdY;
+   TH1D *hKoverPiDNdY;
+   TH1D *hPoverPiDNdY;
+   TH1D *hKCorrectedDNdY;
+   TH1D *hPiCorrectedDNdY;
+   TH1D *hPCorrectedDNdY;
+   TH1D *hKoverPiCorrectedDNdY;
+   TH1D *hPoverPiCorrectedDNdY;
 
    // 2D pT spectra: x = Nch_tag, y = pT
    TH2D *hKPt;
@@ -207,6 +242,13 @@ public:
    TH2D *hKPtCorrectedDNdEta;
    TH2D *hPiPtCorrectedDNdEta;
    TH2D *hPPtCorrectedDNdEta;
+   TH2D *hKPtDNdY;
+   TH2D *hPiPtDNdY;
+   TH2D *hPPtDNdY;
+   TH2D *hUPtDNdY;
+   TH2D *hKPtCorrectedDNdY;
+   TH2D *hPiPtCorrectedDNdY;
+   TH2D *hPPtCorrectedDNdY;
 
    // MC-only response and truth-yield histograms for Ntag unfolding
    TH2D *hNtagResponse;   // x=true Ntag, y=reco Ntag
@@ -227,6 +269,15 @@ public:
    TH1D *hKTruedNdEta;
    TH1D *hPiTruedNdEta;
    TH1D *hPTruedNdEta;
+   TH2D *hDNdYResponse;
+   TH2D *hDNdYResponseK;
+   TH2D *hDNdYResponsePi;
+   TH2D *hDNdYResponseP;
+   TH1D *hDNdYTrue;
+   TH1D *hDNdYReco;
+   TH1D *hKTruedNdY;
+   TH1D *hPiTruedNdY;
+   TH1D *hPTruedNdY;
 
    // Parameters
    KtoPiParameters par;
@@ -279,6 +330,21 @@ public:
    std::vector<double> SumGenEffKDNdEta;
    std::vector<double> SumGenEffPiDNdEta;
    std::vector<double> SumGenEffPDNdEta;
+   std::vector<double> SumKAsKDNdY;
+   std::vector<double> SumKAsPiDNdY;
+   std::vector<double> SumKAsPDNdY;
+   std::vector<double> SumPiAsKDNdY;
+   std::vector<double> SumPiAsPiDNdY;
+   std::vector<double> SumPiAsPDNdY;
+   std::vector<double> SumPAsKDNdY;
+   std::vector<double> SumPAsPiDNdY;
+   std::vector<double> SumPAsPDNdY;
+   std::vector<double> SumRecoEffKDNdY;
+   std::vector<double> SumRecoEffPiDNdY;
+   std::vector<double> SumRecoEffPDNdY;
+   std::vector<double> SumGenEffKDNdY;
+   std::vector<double> SumGenEffPiDNdY;
+   std::vector<double> SumGenEffPDNdY;
 
    std::vector<long long> CountEffTracks;
    std::vector<long long> CountTrueK;
@@ -288,6 +354,7 @@ public:
    std::vector<long long> CountGenPi;
    std::vector<long long> CountGenP;
    std::vector<long long> CountEffTracksDNdEta;
+   std::vector<long long> CountEffTracksDNdY;
    long long NPIDPassTagTracks;
    long long NPIDTieTracks;
 
@@ -318,6 +385,16 @@ public:
       , hPCorrectedDNdEta(nullptr)
       , hKoverPiCorrectedDNdEta(nullptr)
       , hPoverPiCorrectedDNdEta(nullptr)
+      , hKDNdY(nullptr)
+      , hPiDNdY(nullptr)
+      , hPDNdY(nullptr)
+      , hKoverPiDNdY(nullptr)
+      , hPoverPiDNdY(nullptr)
+      , hKCorrectedDNdY(nullptr)
+      , hPiCorrectedDNdY(nullptr)
+      , hPCorrectedDNdY(nullptr)
+      , hKoverPiCorrectedDNdY(nullptr)
+      , hPoverPiCorrectedDNdY(nullptr)
       , hKPt(nullptr)
       , hPiPt(nullptr)
       , hPPt(nullptr)
@@ -332,6 +409,13 @@ public:
       , hKPtCorrectedDNdEta(nullptr)
       , hPiPtCorrectedDNdEta(nullptr)
       , hPPtCorrectedDNdEta(nullptr)
+      , hKPtDNdY(nullptr)
+      , hPiPtDNdY(nullptr)
+      , hPPtDNdY(nullptr)
+      , hUPtDNdY(nullptr)
+      , hKPtCorrectedDNdY(nullptr)
+      , hPiPtCorrectedDNdY(nullptr)
+      , hPPtCorrectedDNdY(nullptr)
       , hNtagResponse(nullptr)
       , hNtagResponseK(nullptr)
       , hNtagResponsePi(nullptr)
@@ -350,6 +434,15 @@ public:
       , hKTruedNdEta(nullptr)
       , hPiTruedNdEta(nullptr)
       , hPTruedNdEta(nullptr)
+      , hDNdYResponse(nullptr)
+      , hDNdYResponseK(nullptr)
+      , hDNdYResponsePi(nullptr)
+      , hDNdYResponseP(nullptr)
+      , hDNdYTrue(nullptr)
+      , hDNdYReco(nullptr)
+      , hKTruedNdY(nullptr)
+      , hPiTruedNdY(nullptr)
+      , hPTruedNdY(nullptr)
       , NPIDPassTagTracks(0)
       , NPIDTieTracks(0)
       , par(apar)
@@ -506,6 +599,38 @@ public:
       hKoverPiCorrectedDNdEta = nullptr;
       hPoverPiCorrectedDNdEta = nullptr;
 
+      hKDNdY = (TH1D *)hK->Clone("hKDNdY");
+      hKDNdY->SetTitle("Kaon candidates vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Yield (sum over tracks)");
+      hKDNdY->Reset();
+      hKDNdY->Sumw2();
+
+      hPiDNdY = (TH1D *)hKDNdY->Clone("hPiDNdY");
+      hPiDNdY->SetTitle("Pion candidates vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Yield (sum over tracks)");
+
+      hPDNdY = (TH1D *)hKDNdY->Clone("hPDNdY");
+      hPDNdY->SetTitle("Proton candidates vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Yield (sum over tracks)");
+
+      hKoverPiDNdY = nullptr;
+      hPoverPiDNdY = nullptr;
+
+      hKCorrectedDNdY = (TH1D *)hKDNdY->Clone("hKCorrectedDNdY");
+      hKCorrectedDNdY->SetTitle("PID-corrected K yield vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Corrected N_{K}");
+      hKCorrectedDNdY->Reset();
+      hKCorrectedDNdY->Sumw2();
+
+      hPiCorrectedDNdY = (TH1D *)hKDNdY->Clone("hPiCorrectedDNdY");
+      hPiCorrectedDNdY->SetTitle("PID-corrected #pi yield vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Corrected N_{#pi}");
+      hPiCorrectedDNdY->Reset();
+      hPiCorrectedDNdY->Sumw2();
+
+      hPCorrectedDNdY = (TH1D *)hKDNdY->Clone("hPCorrectedDNdY");
+      hPCorrectedDNdY->SetTitle("PID-corrected p yield vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Corrected N_{p}");
+      hPCorrectedDNdY->Reset();
+      hPCorrectedDNdY->Sumw2();
+
+      hKoverPiCorrectedDNdY = nullptr;
+      hPoverPiCorrectedDNdY = nullptr;
+
       //--------------------------------------------------
       // Book 2D pT spectra: x = Nch_tag, y = pT
       //--------------------------------------------------
@@ -586,6 +711,41 @@ public:
       hPPtCorrectedDNdEta->SetTitle("PID-corrected p p_{T} spectrum;dN_{ch}/d#eta (reco, |#eta|<0.5);p_{T} (GeV/c)");
       hPPtCorrectedDNdEta->Reset();
       hPPtCorrectedDNdEta->Sumw2();
+
+      hKPtDNdY = (TH2D *)hKPt->Clone("hKPtDNdY");
+      hKPtDNdY->SetTitle("Kaon candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hKPtDNdY->Reset();
+      hKPtDNdY->Sumw2();
+
+      hPiPtDNdY = (TH2D *)hPiPt->Clone("hPiPtDNdY");
+      hPiPtDNdY->SetTitle("Pion candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hPiPtDNdY->Reset();
+      hPiPtDNdY->Sumw2();
+
+      hPPtDNdY = (TH2D *)hPPt->Clone("hPPtDNdY");
+      hPPtDNdY->SetTitle("Proton candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hPPtDNdY->Reset();
+      hPPtDNdY->Sumw2();
+
+      hUPtDNdY = (TH2D *)hUPt->Clone("hUPtDNdY");
+      hUPtDNdY->SetTitle("Untagged charged tracks;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hUPtDNdY->Reset();
+      hUPtDNdY->Sumw2();
+
+      hKPtCorrectedDNdY = (TH2D *)hKPtDNdY->Clone("hKPtCorrectedDNdY");
+      hKPtCorrectedDNdY->SetTitle("PID-corrected K p_{T} spectrum;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hKPtCorrectedDNdY->Reset();
+      hKPtCorrectedDNdY->Sumw2();
+
+      hPiPtCorrectedDNdY = (TH2D *)hPiPtDNdY->Clone("hPiPtCorrectedDNdY");
+      hPiPtCorrectedDNdY->SetTitle("PID-corrected #pi p_{T} spectrum;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hPiPtCorrectedDNdY->Reset();
+      hPiPtCorrectedDNdY->Sumw2();
+
+      hPPtCorrectedDNdY = (TH2D *)hPPtDNdY->Clone("hPPtCorrectedDNdY");
+      hPPtCorrectedDNdY->SetTitle("PID-corrected p p_{T} spectrum;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
+      hPPtCorrectedDNdY->Reset();
+      hPPtCorrectedDNdY->Sumw2();
 
       // MC-only histograms for multiplicity response/unfolding support
       hNtagResponse = new TH2D("hNtagResponse",
@@ -680,6 +840,52 @@ public:
       hPTruedNdEta->Reset();
       hPTruedNdEta->Sumw2();
 
+      hDNdYResponse = new TH2D("hDNdYResponse",
+                               "dN_{ch}/dy response wrt thrust axis;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5)",
+                               nbinsNch, nchMin, nchMax,
+                               nbinsNch, nchMin, nchMax);
+      hDNdYResponse->Sumw2();
+
+      hDNdYResponseK = (TH2D *)hDNdYResponse->Clone("hDNdYResponseK");
+      hDNdYResponseK->SetTitle("K-weighted dN_{ch}/dy response;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5)");
+      hDNdYResponseK->Reset();
+      hDNdYResponseK->Sumw2();
+
+      hDNdYResponsePi = (TH2D *)hDNdYResponse->Clone("hDNdYResponsePi");
+      hDNdYResponsePi->SetTitle("#pi-weighted dN_{ch}/dy response;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5)");
+      hDNdYResponsePi->Reset();
+      hDNdYResponsePi->Sumw2();
+
+      hDNdYResponseP = (TH2D *)hDNdYResponse->Clone("hDNdYResponseP");
+      hDNdYResponseP->SetTitle("p-weighted dN_{ch}/dy response;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5)");
+      hDNdYResponseP->Reset();
+      hDNdYResponseP->Sumw2();
+
+      hDNdYTrue = (TH1D *)hK->Clone("hDNdYTrue");
+      hDNdYTrue->SetTitle("True dN_{ch}/dy distribution wrt thrust axis (|y_{T}|<0.5);dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);Events");
+      hDNdYTrue->Reset();
+      hDNdYTrue->Sumw2();
+
+      hDNdYReco = (TH1D *)hKDNdY->Clone("hDNdYReco");
+      hDNdYReco->SetTitle("Reco dN_{ch}/dy distribution wrt thrust axis (|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Events");
+      hDNdYReco->Reset();
+      hDNdYReco->Sumw2();
+
+      hKTruedNdY = (TH1D *)hK->Clone("hKTruedNdY");
+      hKTruedNdY->SetTitle("Generator-level K yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{K}^{gen}");
+      hKTruedNdY->Reset();
+      hKTruedNdY->Sumw2();
+
+      hPiTruedNdY = (TH1D *)hK->Clone("hPiTruedNdY");
+      hPiTruedNdY->SetTitle("Generator-level #pi yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{#pi}^{gen}");
+      hPiTruedNdY->Reset();
+      hPiTruedNdY->Sumw2();
+
+      hPTruedNdY = (TH1D *)hK->Clone("hPTruedNdY");
+      hPTruedNdY->SetTitle("Generator-level p yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{p}^{gen}");
+      hPTruedNdY->Reset();
+      hPTruedNdY->Sumw2();
+
       //--------------------------------------------------
       // Allocate per-(Nch_tag, pT) efficiency accumulators
       //--------------------------------------------------
@@ -717,9 +923,25 @@ public:
       SumGenEffKDNdEta.assign(nCells + 1, 0.0);
       SumGenEffPiDNdEta.assign(nCells + 1, 0.0);
       SumGenEffPDNdEta.assign(nCells + 1, 0.0);
+      SumKAsKDNdY.assign(nCells + 1, 0.0);
+      SumKAsPiDNdY.assign(nCells + 1, 0.0);
+      SumKAsPDNdY.assign(nCells + 1, 0.0);
+      SumPiAsKDNdY.assign(nCells + 1, 0.0);
+      SumPiAsPiDNdY.assign(nCells + 1, 0.0);
+      SumPiAsPDNdY.assign(nCells + 1, 0.0);
+      SumPAsKDNdY.assign(nCells + 1, 0.0);
+      SumPAsPiDNdY.assign(nCells + 1, 0.0);
+      SumPAsPDNdY.assign(nCells + 1, 0.0);
+      SumRecoEffKDNdY.assign(nCells + 1, 0.0);
+      SumRecoEffPiDNdY.assign(nCells + 1, 0.0);
+      SumRecoEffPDNdY.assign(nCells + 1, 0.0);
+      SumGenEffKDNdY.assign(nCells + 1, 0.0);
+      SumGenEffPiDNdY.assign(nCells + 1, 0.0);
+      SumGenEffPDNdY.assign(nCells + 1, 0.0);
 
       CountEffTracks.assign(nCells + 1, 0);
       CountEffTracksDNdEta.assign(nCells + 1, 0);
+      CountEffTracksDNdY.assign(nCells + 1, 0);
       CountTrueK.assign(nCells + 1, 0);
       CountTruePi.assign(nCells + 1, 0);
       CountTrueP.assign(nCells + 1, 0);
@@ -751,6 +973,16 @@ public:
       delete hPCorrectedDNdEta;
       delete hKoverPiCorrectedDNdEta;
       delete hPoverPiCorrectedDNdEta;
+      delete hKDNdY;
+      delete hPiDNdY;
+      delete hPDNdY;
+      delete hKoverPiDNdY;
+      delete hPoverPiDNdY;
+      delete hKCorrectedDNdY;
+      delete hPiCorrectedDNdY;
+      delete hPCorrectedDNdY;
+      delete hKoverPiCorrectedDNdY;
+      delete hPoverPiCorrectedDNdY;
 
       delete hKPt;
       delete hPiPt;
@@ -766,6 +998,13 @@ public:
       delete hKPtCorrectedDNdEta;
       delete hPiPtCorrectedDNdEta;
       delete hPPtCorrectedDNdEta;
+      delete hKPtDNdY;
+      delete hPiPtDNdY;
+      delete hPPtDNdY;
+      delete hUPtDNdY;
+      delete hKPtCorrectedDNdY;
+      delete hPiPtCorrectedDNdY;
+      delete hPPtCorrectedDNdY;
       delete hNtagResponse;
       delete hNtagResponseK;
       delete hNtagResponsePi;
@@ -784,6 +1023,15 @@ public:
       delete hKTruedNdEta;
       delete hPiTruedNdEta;
       delete hPTruedNdEta;
+      delete hDNdYResponse;
+      delete hDNdYResponseK;
+      delete hDNdYResponsePi;
+      delete hDNdYResponseP;
+      delete hDNdYTrue;
+      delete hDNdYReco;
+      delete hKTruedNdY;
+      delete hPiTruedNdY;
+      delete hPTruedNdY;
 
       if (inf)
       {
@@ -943,31 +1191,45 @@ public:
          // Event selection
          //-------------------------
 
-         // Sum(RecoE)
-         double sumRecoE = 0.0;
-         for (int i = 0; i < nreco; ++i)
-            sumRecoE += M->RecoE[i];
+         if (par.UsePassAllSelection)
+         {
+            // Nominal v6+ event preselection: use the archived event-selection bit
+            // written into the open-data trees instead of recomputing the component cuts.
+            if (M->PassAll != 1)
+               continue;
+         }
+         else
+         {
+            // Legacy fallback: recompute the historical selection from the stored
+            // reco observables for debugging and compatibility studies.
+            double sumRecoE = 0.0;
+            for (int i = 0; i < nreco; ++i)
+               sumRecoE += M->RecoE[i];
 
-         // Sum(RecoE)/EcmRef > 0.5
-         if (sumRecoE / EcmRef <= 0.5)
-            continue;
+            if (sumRecoE / EcmRef <= 0.5)
+               continue;
+            if (M->Nch < MinNch)
+               continue;
 
-         // Nch >= MinNch
-         if (M->Nch < MinNch)
-            continue;
+            double theta = std::acos(M->ThrustZ);
+            if (theta <= MinTheta)
+               continue;
+            if (theta >= MaxTheta)
+               continue;
+         }
 
-         // 30° < acos(ThrustZ) < 150°
-         double theta = std::acos(M->ThrustZ);
-         if (theta <= MinTheta)
-            continue;
-         if (theta >= MaxTheta)
-            continue;
+         const double thrustNorm = std::sqrt(M->ThrustX * M->ThrustX + M->ThrustY * M->ThrustY + M->ThrustZ * M->ThrustZ);
+         const bool hasThrustAxis = (thrustNorm > 0.0);
+         const double thrustX = hasThrustAxis ? (M->ThrustX / thrustNorm) : 0.0;
+         const double thrustY = hasThrustAxis ? (M->ThrustY / thrustNorm) : 0.0;
+         const double thrustZ = hasThrustAxis ? (M->ThrustZ / thrustNorm) : 1.0;
 
          //-------------------------
          // Compute Nch_tag for this event
          //-------------------------
          int NchTag = 0;
          int NchEta05Reco = 0;
+         int NchY05Reco = 0;
          for (int i = 0; i < nreco; ++i)
          {
             if (M->RecoGoodTrack[i] != 1)
@@ -987,6 +1249,15 @@ public:
                const double eta = std::asinh(pz / pt);
                if (std::abs(eta) < 0.5)
                   ++NchEta05Reco;
+            }
+            if (hasThrustAxis)
+            {
+               double yThrust = 0.0;
+               if (ComputeAxisRapidity(px, py, pz, M->RecoE[i], thrustX, thrustY, thrustZ, yThrust) &&
+                   std::abs(yThrust) < 0.5)
+               {
+                  ++NchY05Reco;
+               }
             }
 
             if (pt < par.NtagPtMin)
@@ -1008,6 +1279,8 @@ public:
             NchTag = par.MaxNchTag;
          if (NchEta05Reco > par.MaxNchTag)
             NchEta05Reco = par.MaxNchTag;
+         if (NchY05Reco > par.MaxNchTag)
+            NchY05Reco = par.MaxNchTag;
 
          // Bin index along Nch_tag axis (1..NNchBins)
          int nchBin = hK->GetXaxis()->FindBin(static_cast<double>(NchTag));
@@ -1022,6 +1295,12 @@ public:
          if (dndetaBin > NNchBins)
             dndetaBin = NNchBins;
 
+         int dndyBin = hKDNdY->GetXaxis()->FindBin(static_cast<double>(NchY05Reco));
+         if (dndyBin < 1)
+            dndyBin = 1;
+         if (dndyBin > NNchBins)
+            dndyBin = NNchBins;
+
          // Build true multiplicity and truth yields (MC only) for response/unfolding support.
          // The truth-side identified yields must use the same fiducial definition as the
          // standalone generator reference so that closure compares identical quantities.
@@ -1030,6 +1309,7 @@ public:
          int nPigenEvt = 0;
          int nPgenEvt = 0;
          int nChEta05True = 0;
+         int nChY05True = 0;
          if (ngen > 0)
          {
             for (int i = 0; i < ngen; ++i)
@@ -1055,6 +1335,15 @@ public:
                   if (par.UseCentralEtaNtag && std::abs(eta) >= 0.5)
                      continue;
                }
+               if (hasThrustAxis)
+               {
+                  double yThrust = 0.0;
+                  if (ComputeAxisRapidity(genPx, genPy, genPz, M->GenE[i], thrustX, thrustY, thrustZ, yThrust) &&
+                      std::abs(yThrust) < 0.5)
+                  {
+                     ++nChY05True;
+                  }
+               }
 
                if (genPtAll < par.NtagPtMin)
                   continue;
@@ -1077,6 +1366,8 @@ public:
          }
          if (nChEta05True > par.MaxNchTag)
             nChEta05True = par.MaxNchTag;
+         if (nChY05True > par.MaxNchTag)
+            nChY05True = par.MaxNchTag;
 
          // Note: reco correction always uses efficiency branches from the tree.
          // MC generator truth is produced in a separate IsGen=true run.
@@ -1152,12 +1443,18 @@ public:
             const int kTag = static_cast<int>(M->RecoPIDKaon[i]);
             const int piTag = static_cast<int>(M->RecoPIDPion[i]);
             const int pTag = static_cast<int>(M->RecoPIDProton[i]);
-            const bool passTag = (kTag >= 2 || piTag >= 2 || pTag >= 2);
+            const bool passKaonTag = (kTag >= 2);
+            const bool passPionTag = (piTag >= 2);
+            const bool passProtonTag = (pTag >= 2);
+            const bool passTag = (passKaonTag || passPionTag || passProtonTag);
             if (!passPIDFiducialFromMom(M->RecoPx[i], M->RecoPy[i], M->RecoPz[i]))
                continue;
 
-            // Exclusive observed PID category: K, pi, p, untagged
-            int obsCat = 3; // untagged
+            bool isKaonTag = false;
+            bool isPionTag = false;
+            bool isProtonTag = false;
+            bool isUntagged = false;
+
             if (passTag)
             {
                ++NPIDPassTagTracks;
@@ -1165,29 +1462,49 @@ public:
                const int nBest = (kTag == best) + (piTag == best) + (pTag == best);
                if (nBest > 1)
                   ++NPIDTieTracks;
-
-               if (best < 2)
-               {
-                  obsCat = 3;
-               }
-               else if (nBest > 1 && par.PIDTieMode == 1)
-               {
-                  obsCat = 3;
-               }
-               else
-               {
-                  // Legacy deterministic tie handling (priority K > pi > p).
-                  obsCat = 0;
-                  if (piTag > kTag && piTag >= pTag)
-                     obsCat = 1;
-                  if (pTag > kTag && pTag > piTag)
-                     obsCat = 2;
-               }
             }
-            const bool isKaonTag = (obsCat == 0);
-            const bool isPionTag = (obsCat == 1);
-            const bool isProtonTag = (obsCat == 2);
-            const bool isUntagged = (obsCat == 3);
+
+            if (par.UseInclusivePIDObservation)
+            {
+               // v5-style observed spectra: every species with PID score >= 2
+               // contributes to its raw spectrum, so duplicate tag counts are
+               // allowed across K/pi/p for the same track.
+               isKaonTag = passKaonTag;
+               isPionTag = passPionTag;
+               isProtonTag = passProtonTag;
+               isUntagged = !passTag;
+            }
+            else
+            {
+               // Exclusive observed PID category: K, pi, p, untagged
+               int obsCat = 3; // untagged
+               if (passTag)
+               {
+                  const int best = std::max(kTag, std::max(piTag, pTag));
+                  const int nBest = (kTag == best) + (piTag == best) + (pTag == best);
+                  if (best < 2)
+                  {
+                     obsCat = 3;
+                  }
+                  else if (nBest > 1 && par.PIDTieMode == 1)
+                  {
+                     obsCat = 3;
+                  }
+                  else
+                  {
+                     // Legacy deterministic tie handling (priority K > pi > p).
+                     obsCat = 0;
+                     if (piTag > kTag && piTag >= pTag)
+                        obsCat = 1;
+                     if (pTag > kTag && pTag > piTag)
+                        obsCat = 2;
+                  }
+               }
+               isKaonTag = (obsCat == 0);
+               isPionTag = (obsCat == 1);
+               isProtonTag = (obsCat == 2);
+               isUntagged = (obsCat == 3);
+            }
 
             // NOTE: you may need to adapt the pT definition below to your
             // StrangenessMessenger. If you do not have a direct RecoPT[],
@@ -1229,6 +1546,14 @@ public:
                hPPtDNdEta->Fill(NchEta05Reco, pt);
             if (isUntagged)
                hUPtDNdEta->Fill(NchEta05Reco, pt);
+            if (isKaonTag)
+               hKPtDNdY->Fill(NchY05Reco, pt);
+            if (isPionTag)
+               hPiPtDNdY->Fill(NchY05Reco, pt);
+            if (isProtonTag)
+               hPPtDNdY->Fill(NchY05Reco, pt);
+            if (isUntagged)
+               hUPtDNdY->Fill(NchY05Reco, pt);
 
             // Accumulate PID efficiencies / fake rates
             if (M->RecoCharge[i] == 0.0)
@@ -1236,6 +1561,7 @@ public:
 
             const int idx = flatIndex(nchBin, ptBin);
             const int idxDNdEta = flatIndex(dndetaBin, ptBin);
+            const int idxDNdY = flatIndex(dndyBin, ptBin);
 
             // *** IMPORTANT ***
             // The names below assume that the messenger provides the
@@ -1255,6 +1581,9 @@ public:
             SumKAsKDNdEta[idxDNdEta]  += M->RecoEfficiencyKAsK[i];
             SumKAsPiDNdEta[idxDNdEta] += M->RecoEfficiencyKAsPi[i];
             SumKAsPDNdEta[idxDNdEta]  += M->RecoEfficiencyKAsP[i];
+            SumKAsKDNdY[idxDNdY]  += M->RecoEfficiencyKAsK[i];
+            SumKAsPiDNdY[idxDNdY] += M->RecoEfficiencyKAsPi[i];
+            SumKAsPDNdY[idxDNdY]  += M->RecoEfficiencyKAsP[i];
 
             SumPiAsK[idx]  += M->RecoEfficiencyPiAsK[i];
             SumPiAsPi[idx] += M->RecoEfficiencyPiAsPi[i];
@@ -1262,6 +1591,9 @@ public:
             SumPiAsKDNdEta[idxDNdEta]  += M->RecoEfficiencyPiAsK[i];
             SumPiAsPiDNdEta[idxDNdEta] += M->RecoEfficiencyPiAsPi[i];
             SumPiAsPDNdEta[idxDNdEta]  += M->RecoEfficiencyPiAsP[i];
+            SumPiAsKDNdY[idxDNdY]  += M->RecoEfficiencyPiAsK[i];
+            SumPiAsPiDNdY[idxDNdY] += M->RecoEfficiencyPiAsPi[i];
+            SumPiAsPDNdY[idxDNdY]  += M->RecoEfficiencyPiAsP[i];
 
             SumPAsK[idx]   += M->RecoEfficiencyPAsK[i];
             SumPAsPi[idx]  += M->RecoEfficiencyPAsPi[i];
@@ -1269,6 +1601,9 @@ public:
             SumPAsKDNdEta[idxDNdEta]  += M->RecoEfficiencyPAsK[i];
             SumPAsPiDNdEta[idxDNdEta] += M->RecoEfficiencyPAsPi[i];
             SumPAsPDNdEta[idxDNdEta]  += M->RecoEfficiencyPAsP[i];
+            SumPAsKDNdY[idxDNdY]  += M->RecoEfficiencyPAsK[i];
+            SumPAsPiDNdY[idxDNdY] += M->RecoEfficiencyPAsPi[i];
+            SumPAsPDNdY[idxDNdY]  += M->RecoEfficiencyPAsP[i];
 
             if (HasRecoMatchingBranches)
             {
@@ -1278,6 +1613,9 @@ public:
                SumRecoEffKDNdEta[idxDNdEta]  += RecoEfficiencyKExtra[i];
                SumRecoEffPiDNdEta[idxDNdEta] += RecoEfficiencyPiExtra[i];
                SumRecoEffPDNdEta[idxDNdEta]  += RecoEfficiencyPExtra[i];
+               SumRecoEffKDNdY[idxDNdY]  += RecoEfficiencyKExtra[i];
+               SumRecoEffPiDNdY[idxDNdY] += RecoEfficiencyPiExtra[i];
+               SumRecoEffPDNdY[idxDNdY]  += RecoEfficiencyPExtra[i];
             }
             else
             {
@@ -1287,6 +1625,9 @@ public:
                SumRecoEffKDNdEta[idxDNdEta]  += 1.0;
                SumRecoEffPiDNdEta[idxDNdEta] += 1.0;
                SumRecoEffPDNdEta[idxDNdEta]  += 1.0;
+               SumRecoEffKDNdY[idxDNdY]  += 1.0;
+               SumRecoEffPiDNdY[idxDNdY] += 1.0;
+               SumRecoEffPDNdY[idxDNdY]  += 1.0;
             }
             if (HasGenMatchingBranches)
             {
@@ -1296,6 +1637,9 @@ public:
                SumGenEffKDNdEta[idxDNdEta]  += RecoGenEfficiencyKExtra[i];
                SumGenEffPiDNdEta[idxDNdEta] += RecoGenEfficiencyPiExtra[i];
                SumGenEffPDNdEta[idxDNdEta]  += RecoGenEfficiencyPExtra[i];
+               SumGenEffKDNdY[idxDNdY]  += RecoGenEfficiencyKExtra[i];
+               SumGenEffPiDNdY[idxDNdY] += RecoGenEfficiencyPiExtra[i];
+               SumGenEffPDNdY[idxDNdY]  += RecoGenEfficiencyPExtra[i];
             }
             else
             {
@@ -1305,10 +1649,14 @@ public:
                SumGenEffKDNdEta[idxDNdEta]  += 1.0;
                SumGenEffPiDNdEta[idxDNdEta] += 1.0;
                SumGenEffPDNdEta[idxDNdEta]  += 1.0;
+               SumGenEffKDNdY[idxDNdY]  += 1.0;
+               SumGenEffPiDNdY[idxDNdY] += 1.0;
+               SumGenEffPDNdY[idxDNdY]  += 1.0;
             }
 
             CountEffTracks[idx]++;
             CountEffTracksDNdEta[idxDNdEta]++;
+            CountEffTracksDNdY[idxDNdY]++;
          }
 
          // Event-wise raw yields integrated over pT (sanity check)
@@ -1318,17 +1666,26 @@ public:
          hKDNdEta->Fill(NchEta05Reco, nK);
          hPiDNdEta->Fill(NchEta05Reco, nPi);
          hPDNdEta->Fill(NchEta05Reco, nP);
+         hKDNdY->Fill(NchY05Reco, nK);
+         hPiDNdY->Fill(NchY05Reco, nPi);
+         hPDNdY->Fill(NchY05Reco, nP);
+         if (hNtagReco != nullptr)
+            hNtagReco->Fill(NchTag);
+         if (hDNdEtaReco != nullptr)
+            hDNdEtaReco->Fill(NchEta05Reco);
+         if (hDNdYReco != nullptr)
+            hDNdYReco->Fill(NchY05Reco);
 
          // MC-only response bookkeeping in reco mode
          if (ngen > 0 && hNtagResponse != nullptr)
          {
             const double dNdEtaTrue = static_cast<double>(nChEta05True);
+            const double dNdYTrue = static_cast<double>(nChY05True);
             hNtagResponse->Fill(NchTagTrue, NchTag);
             hNtagResponseK->Fill(NchTagTrue, NchTag, nKgenEvt);
             hNtagResponsePi->Fill(NchTagTrue, NchTag, nPigenEvt);
             hNtagResponseP->Fill(NchTagTrue, NchTag, nPgenEvt);
             hNtagTrue->Fill(NchTagTrue);
-            hNtagReco->Fill(NchTag);
             hKTrueNtag->Fill(NchTagTrue, nKgenEvt);
             hPiTrueNtag->Fill(NchTagTrue, nPigenEvt);
             hPTrueNtag->Fill(NchTagTrue, nPgenEvt);
@@ -1337,10 +1694,17 @@ public:
             hDNdEtaResponsePi->Fill(dNdEtaTrue, NchEta05Reco, nPigenEvt);
             hDNdEtaResponseP->Fill(dNdEtaTrue, NchEta05Reco, nPgenEvt);
             hDNdEtaTrue->Fill(dNdEtaTrue);
-            hDNdEtaReco->Fill(NchEta05Reco);
             hKTruedNdEta->Fill(dNdEtaTrue, nKgenEvt);
             hPiTruedNdEta->Fill(dNdEtaTrue, nPigenEvt);
             hPTruedNdEta->Fill(dNdEtaTrue, nPgenEvt);
+            hDNdYResponse->Fill(dNdYTrue, NchY05Reco);
+            hDNdYResponseK->Fill(dNdYTrue, NchY05Reco, nKgenEvt);
+            hDNdYResponsePi->Fill(dNdYTrue, NchY05Reco, nPigenEvt);
+            hDNdYResponseP->Fill(dNdYTrue, NchY05Reco, nPgenEvt);
+            hDNdYTrue->Fill(dNdYTrue);
+            hKTruedNdY->Fill(dNdYTrue, nKgenEvt);
+            hPiTruedNdY->Fill(dNdYTrue, nPigenEvt);
+            hPTruedNdY->Fill(dNdYTrue, nPgenEvt);
          }
       }
 
@@ -1399,38 +1763,44 @@ public:
       hKCorrectedDNdEta->Reset();
       hPiCorrectedDNdEta->Reset();
       hPCorrectedDNdEta->Reset();
+      hKPtCorrectedDNdY->Reset();
+      hPiPtCorrectedDNdY->Reset();
+      hPPtCorrectedDNdY->Reset();
+      hKCorrectedDNdY->Reset();
+      hPiCorrectedDNdY->Reset();
+      hPCorrectedDNdY->Reset();
 
-      auto correctAxis = [&](bool useDNdEtaAxis)
+      auto correctAxis = [&](int axisMode)
       {
-         TH2D *hRawK2D = useDNdEtaAxis ? hKPtDNdEta : hKPt;
-         TH2D *hRawPi2D = useDNdEtaAxis ? hPiPtDNdEta : hPiPt;
-         TH2D *hRawP2D = useDNdEtaAxis ? hPPtDNdEta : hPPt;
-         TH2D *hCorrK2D = useDNdEtaAxis ? hKPtCorrectedDNdEta : hKPtCorrected;
-         TH2D *hCorrPi2D = useDNdEtaAxis ? hPiPtCorrectedDNdEta : hPiPtCorrected;
-         TH2D *hCorrP2D = useDNdEtaAxis ? hPPtCorrectedDNdEta : hPPtCorrected;
-         TH1D *hRawK1D = useDNdEtaAxis ? hKDNdEta : hK;
-         TH1D *hRawPi1D = useDNdEtaAxis ? hPiDNdEta : hPi;
-         TH1D *hRawP1D = useDNdEtaAxis ? hPDNdEta : hP;
-         TH1D *hCorrK1D = useDNdEtaAxis ? hKCorrectedDNdEta : hKCorrected;
-         TH1D *hCorrPi1D = useDNdEtaAxis ? hPiCorrectedDNdEta : hPiCorrected;
-         TH1D *hCorrP1D = useDNdEtaAxis ? hPCorrectedDNdEta : hPCorrected;
-         const std::vector<double> *vKAsK = useDNdEtaAxis ? &SumKAsKDNdEta : &SumKAsK;
-         const std::vector<double> *vKAsPi = useDNdEtaAxis ? &SumKAsPiDNdEta : &SumKAsPi;
-         const std::vector<double> *vKAsP = useDNdEtaAxis ? &SumKAsPDNdEta : &SumKAsP;
-         const std::vector<double> *vPiAsK = useDNdEtaAxis ? &SumPiAsKDNdEta : &SumPiAsK;
-         const std::vector<double> *vPiAsPi = useDNdEtaAxis ? &SumPiAsPiDNdEta : &SumPiAsPi;
-         const std::vector<double> *vPiAsP = useDNdEtaAxis ? &SumPiAsPDNdEta : &SumPiAsP;
-         const std::vector<double> *vPAsK = useDNdEtaAxis ? &SumPAsKDNdEta : &SumPAsK;
-         const std::vector<double> *vPAsPi = useDNdEtaAxis ? &SumPAsPiDNdEta : &SumPAsPi;
-         const std::vector<double> *vPAsP = useDNdEtaAxis ? &SumPAsPDNdEta : &SumPAsP;
-         const std::vector<double> *vRecoK = useDNdEtaAxis ? &SumRecoEffKDNdEta : &SumRecoEffK;
-         const std::vector<double> *vRecoPi = useDNdEtaAxis ? &SumRecoEffPiDNdEta : &SumRecoEffPi;
-         const std::vector<double> *vRecoP = useDNdEtaAxis ? &SumRecoEffPDNdEta : &SumRecoEffP;
-         const std::vector<double> *vGenK = useDNdEtaAxis ? &SumGenEffKDNdEta : &SumGenEffK;
-         const std::vector<double> *vGenPi = useDNdEtaAxis ? &SumGenEffPiDNdEta : &SumGenEffPi;
-         const std::vector<double> *vGenP = useDNdEtaAxis ? &SumGenEffPDNdEta : &SumGenEffP;
-         const std::vector<long long> *vCount = useDNdEtaAxis ? &CountEffTracksDNdEta : &CountEffTracks;
-         const char *axisLabel = useDNdEtaAxis ? "reco dNch/deta" : "NchTag";
+         TH2D *hRawK2D = (axisMode == 1) ? hKPtDNdEta : ((axisMode == 2) ? hKPtDNdY : hKPt);
+         TH2D *hRawPi2D = (axisMode == 1) ? hPiPtDNdEta : ((axisMode == 2) ? hPiPtDNdY : hPiPt);
+         TH2D *hRawP2D = (axisMode == 1) ? hPPtDNdEta : ((axisMode == 2) ? hPPtDNdY : hPPt);
+         TH2D *hCorrK2D = (axisMode == 1) ? hKPtCorrectedDNdEta : ((axisMode == 2) ? hKPtCorrectedDNdY : hKPtCorrected);
+         TH2D *hCorrPi2D = (axisMode == 1) ? hPiPtCorrectedDNdEta : ((axisMode == 2) ? hPiPtCorrectedDNdY : hPiPtCorrected);
+         TH2D *hCorrP2D = (axisMode == 1) ? hPPtCorrectedDNdEta : ((axisMode == 2) ? hPPtCorrectedDNdY : hPPtCorrected);
+         TH1D *hRawK1D = (axisMode == 1) ? hKDNdEta : ((axisMode == 2) ? hKDNdY : hK);
+         TH1D *hRawPi1D = (axisMode == 1) ? hPiDNdEta : ((axisMode == 2) ? hPiDNdY : hPi);
+         TH1D *hRawP1D = (axisMode == 1) ? hPDNdEta : ((axisMode == 2) ? hPDNdY : hP);
+         TH1D *hCorrK1D = (axisMode == 1) ? hKCorrectedDNdEta : ((axisMode == 2) ? hKCorrectedDNdY : hKCorrected);
+         TH1D *hCorrPi1D = (axisMode == 1) ? hPiCorrectedDNdEta : ((axisMode == 2) ? hPiCorrectedDNdY : hPiCorrected);
+         TH1D *hCorrP1D = (axisMode == 1) ? hPCorrectedDNdEta : ((axisMode == 2) ? hPCorrectedDNdY : hPCorrected);
+         const std::vector<double> *vKAsK = (axisMode == 1) ? &SumKAsKDNdEta : ((axisMode == 2) ? &SumKAsKDNdY : &SumKAsK);
+         const std::vector<double> *vKAsPi = (axisMode == 1) ? &SumKAsPiDNdEta : ((axisMode == 2) ? &SumKAsPiDNdY : &SumKAsPi);
+         const std::vector<double> *vKAsP = (axisMode == 1) ? &SumKAsPDNdEta : ((axisMode == 2) ? &SumKAsPDNdY : &SumKAsP);
+         const std::vector<double> *vPiAsK = (axisMode == 1) ? &SumPiAsKDNdEta : ((axisMode == 2) ? &SumPiAsKDNdY : &SumPiAsK);
+         const std::vector<double> *vPiAsPi = (axisMode == 1) ? &SumPiAsPiDNdEta : ((axisMode == 2) ? &SumPiAsPiDNdY : &SumPiAsPi);
+         const std::vector<double> *vPiAsP = (axisMode == 1) ? &SumPiAsPDNdEta : ((axisMode == 2) ? &SumPiAsPDNdY : &SumPiAsP);
+         const std::vector<double> *vPAsK = (axisMode == 1) ? &SumPAsKDNdEta : ((axisMode == 2) ? &SumPAsKDNdY : &SumPAsK);
+         const std::vector<double> *vPAsPi = (axisMode == 1) ? &SumPAsPiDNdEta : ((axisMode == 2) ? &SumPAsPiDNdY : &SumPAsPi);
+         const std::vector<double> *vPAsP = (axisMode == 1) ? &SumPAsPDNdEta : ((axisMode == 2) ? &SumPAsPDNdY : &SumPAsP);
+         const std::vector<double> *vRecoK = (axisMode == 1) ? &SumRecoEffKDNdEta : ((axisMode == 2) ? &SumRecoEffKDNdY : &SumRecoEffK);
+         const std::vector<double> *vRecoPi = (axisMode == 1) ? &SumRecoEffPiDNdEta : ((axisMode == 2) ? &SumRecoEffPiDNdY : &SumRecoEffPi);
+         const std::vector<double> *vRecoP = (axisMode == 1) ? &SumRecoEffPDNdEta : ((axisMode == 2) ? &SumRecoEffPDNdY : &SumRecoEffP);
+         const std::vector<double> *vGenK = (axisMode == 1) ? &SumGenEffKDNdEta : ((axisMode == 2) ? &SumGenEffKDNdY : &SumGenEffK);
+         const std::vector<double> *vGenPi = (axisMode == 1) ? &SumGenEffPiDNdEta : ((axisMode == 2) ? &SumGenEffPiDNdY : &SumGenEffPi);
+         const std::vector<double> *vGenP = (axisMode == 1) ? &SumGenEffPDNdEta : ((axisMode == 2) ? &SumGenEffPDNdY : &SumGenEffP);
+         const std::vector<long long> *vCount = (axisMode == 1) ? &CountEffTracksDNdEta : ((axisMode == 2) ? &CountEffTracksDNdY : &CountEffTracks);
+         const char *axisLabel = (axisMode == 1) ? "reco dNch/deta" : ((axisMode == 2) ? "reco dNch/dy" : "NchTag");
 
          for (int iNch = 1; iNch <= nNchBinsLocal; ++iNch)
          {
@@ -1595,8 +1965,9 @@ public:
          }
       };
 
-      correctAxis(false);
-      correctAxis(true);
+      correctAxis(0);
+      correctAxis(1);
+      correctAxis(2);
 
       //-------------------------------------------------
       // Raw K/pi and p/pi vs Nch_tag from p_{T}-integrated spectra
@@ -1635,6 +2006,20 @@ public:
       hKoverPiCorrectedDNdEta->Divide(hPiCorrectedDNdEta);
       hPoverPiCorrectedDNdEta->Divide(hPiCorrectedDNdEta);
 
+      hKoverPiDNdY = (TH1D *)hKDNdY->Clone("hKoverPiDNdY");
+      hPoverPiDNdY = (TH1D *)hPDNdY->Clone("hPoverPiDNdY");
+      hKoverPiDNdY->SetTitle("K/#pi yield ratio vs reco dN_{ch}/dy;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);K/#pi (reco, raw, p_{T}-integrated)");
+      hPoverPiDNdY->SetTitle("p/#pi yield ratio vs reco dN_{ch}/dy;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p/#pi (reco, raw, p_{T}-integrated)");
+      hKoverPiDNdY->Divide(hPiDNdY);
+      hPoverPiDNdY->Divide(hPiDNdY);
+
+      hKoverPiCorrectedDNdY = (TH1D *)hKCorrectedDNdY->Clone("hKoverPiCorrectedDNdY");
+      hPoverPiCorrectedDNdY = (TH1D *)hPCorrectedDNdY->Clone("hPoverPiCorrectedDNdY");
+      hKoverPiCorrectedDNdY->SetTitle("K/#pi vs reco dN_{ch}/dy;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);K/#pi (PID-corrected, p_{T}-integrated)");
+      hPoverPiCorrectedDNdY->SetTitle("p/#pi vs reco dN_{ch}/dy;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p/#pi (PID-corrected, p_{T}-integrated)");
+      hKoverPiCorrectedDNdY->Divide(hPiCorrectedDNdY);
+      hPoverPiCorrectedDNdY->Divide(hPiCorrectedDNdY);
+
       if (!par.IsGen && NPIDPassTagTracks > 0)
       {
          const double frac = static_cast<double>(NPIDTieTracks) / static_cast<double>(NPIDPassTagTracks);
@@ -1663,12 +2048,20 @@ public:
       smartWrite(hPDNdEta);
       smartWrite(hKoverPiDNdEta);
       smartWrite(hPoverPiDNdEta);
+      smartWrite(hKDNdY);
+      smartWrite(hPiDNdY);
+      smartWrite(hPDNdY);
+      smartWrite(hKoverPiDNdY);
+      smartWrite(hPoverPiDNdY);
       smartWrite(hKPt);
       smartWrite(hPiPt);
       smartWrite(hPPt);
       smartWrite(hKPtDNdEta);
       smartWrite(hPiPtDNdEta);
       smartWrite(hPPtDNdEta);
+      smartWrite(hKPtDNdY);
+      smartWrite(hPiPtDNdY);
+      smartWrite(hPPtDNdY);
 
       if (!par.IsGen)
       {
@@ -1682,6 +2075,11 @@ public:
          smartWrite(hPCorrectedDNdEta);
          smartWrite(hKoverPiCorrectedDNdEta);
          smartWrite(hPoverPiCorrectedDNdEta);
+         smartWrite(hKCorrectedDNdY);
+         smartWrite(hPiCorrectedDNdY);
+         smartWrite(hPCorrectedDNdY);
+         smartWrite(hKoverPiCorrectedDNdY);
+         smartWrite(hPoverPiCorrectedDNdY);
 
          // 2D pT spectra
          smartWrite(hUPt);
@@ -1692,6 +2090,10 @@ public:
          smartWrite(hKPtCorrectedDNdEta);
          smartWrite(hPiPtCorrectedDNdEta);
          smartWrite(hPPtCorrectedDNdEta);
+         smartWrite(hUPtDNdY);
+         smartWrite(hKPtCorrectedDNdY);
+         smartWrite(hPiPtCorrectedDNdY);
+         smartWrite(hPPtCorrectedDNdY);
 
          // MC-only histograms used by Ntag unfolding (empty for data)
          smartWrite(hNtagResponse);
@@ -1712,6 +2114,15 @@ public:
          smartWrite(hKTruedNdEta);
          smartWrite(hPiTruedNdEta);
          smartWrite(hPTruedNdEta);
+         smartWrite(hDNdYResponse);
+         smartWrite(hDNdYResponseK);
+         smartWrite(hDNdYResponsePi);
+         smartWrite(hDNdYResponseP);
+         smartWrite(hDNdYTrue);
+         smartWrite(hDNdYReco);
+         smartWrite(hKTruedNdY);
+         smartWrite(hPiTruedNdY);
+         smartWrite(hPTruedNdY);
       }
 
       // Raw K/π canvas
@@ -1797,6 +2208,14 @@ int main(int argc, char *argv[])
    else
       par.UseCentralEtaNtag = false;
 
+   std::string usePassAllSelectionStr = CL.Get("UsePassAllSelection", std::string("true"));
+   if (usePassAllSelectionStr == "1" || usePassAllSelectionStr == "true" || usePassAllSelectionStr == "True" ||
+       usePassAllSelectionStr == "TRUE" || usePassAllSelectionStr == "yes" || usePassAllSelectionStr == "Yes" ||
+       usePassAllSelectionStr == "YES")
+      par.UsePassAllSelection = true;
+   else
+      par.UsePassAllSelection = false;
+
    std::string usePIDFiducialStr = CL.Get("UsePIDFiducial", std::string("true"));
    if (usePIDFiducialStr == "1" || usePIDFiducialStr == "true" || usePIDFiducialStr == "True" ||
        usePIDFiducialStr == "TRUE" || usePIDFiducialStr == "yes" || usePIDFiducialStr == "Yes" ||
@@ -1811,6 +2230,27 @@ int main(int argc, char *argv[])
       par.PIDTieMode = 1;
    else
       par.PIDTieMode = 0;
+   std::string pidObservationMode = CL.Get("PIDObservationMode", std::string("exclusive"));
+   std::string allowDuplicatePID = CL.Get("AllowDuplicatePIDCandidates", std::string(""));
+   if (!allowDuplicatePID.empty())
+   {
+      if (allowDuplicatePID == "1" || allowDuplicatePID == "true" || allowDuplicatePID == "True" ||
+          allowDuplicatePID == "TRUE" || allowDuplicatePID == "yes" || allowDuplicatePID == "Yes" ||
+          allowDuplicatePID == "YES")
+         par.UseInclusivePIDObservation = true;
+      else
+         par.UseInclusivePIDObservation = false;
+   }
+   else if (pidObservationMode == "inclusive" || pidObservationMode == "Inclusive" ||
+            pidObservationMode == "INCLUSIVE" || pidObservationMode == "duplicate" ||
+            pidObservationMode == "Duplicate" || pidObservationMode == "DUPLICATE")
+   {
+      par.UseInclusivePIDObservation = true;
+   }
+   else
+   {
+      par.UseInclusivePIDObservation = false;
+   }
 
    // pT binning:
    //   Option 1 (default): uniform bins
@@ -1839,10 +2279,12 @@ int main(int argc, char *argv[])
    cout << "  MaxThetaDeg = " << MaxThetaDeg    << endl;
    cout << "  IsGen       = " << (par.IsGen ? "true" : "false") << endl;
    cout << "  UseMCTruthMatrix = " << (par.UseMCTruthMatrix ? "true" : "false") << endl;
+   cout << "  UsePassAllSelection = " << (par.UsePassAllSelection ? "true" : "false") << endl;
    cout << "  UseCentralEtaNtag = " << (par.UseCentralEtaNtag ? "true" : "false") << endl;
    cout << "  UsePIDFiducial = " << (par.UsePIDFiducial ? "true" : "false") << endl;
    cout << "  PIDTrackAbsCosMin = " << par.PIDTrackAbsCosMin << endl;
    cout << "  PIDTrackAbsCosMax = " << par.PIDTrackAbsCosMax << endl;
+   cout << "  PIDObservationMode = " << (par.UseInclusivePIDObservation ? "inclusive" : "exclusive") << endl;
    cout << "  PIDTieMode = " << (par.PIDTieMode == 1 ? "untag" : "legacy") << endl;
    cout << "  NtagPtMin   = " << par.NtagPtMin << endl;
 
