@@ -21,7 +21,7 @@ TOY_COVERAGE_CSV = os.environ.get(
         "result/20260314/dndy_toy_coverage/toy_coverage_bins.csv",
     ),
 )
-ACTIVE_KEEPBINS = int(os.environ.get("KEEPBINS_OVERRIDE", "8"))
+ACTIVE_KEEPBINS = int(os.environ.get("KEEPBINS_OVERRIDE", "-1"))
 OUT_DIR = os.environ.get("KPI_DNDY_DIR", "output/systematics_20260314_dndy")
 LOGO_PATH = os.environ.get("EEA_LOGO_PATH", "assets/eea_logo.png")
 
@@ -104,6 +104,18 @@ def read_hist(path, name):
     return hc
 
 
+def read_keepbins_used(path):
+    f = ROOT.TFile.Open(path, "READ")
+    if not f or f.IsZombie():
+        return ACTIVE_KEEPBINS
+    obj = f.Get("keepBinsUsed_dNdY")
+    value = ACTIVE_KEEPBINS
+    if obj and hasattr(obj, "GetVal"):
+        value = int(obj.GetVal())
+    f.Close()
+    return value
+
+
 def apply_residual_correction(h, h_closure):
     hc = h.Clone(h.GetName() + "_residcorr")
     hc.SetDirectory(0)
@@ -113,6 +125,9 @@ def apply_residual_correction(h, h_closure):
             hc.SetBinContent(ib, hc.GetBinContent(ib) / cval)
             hc.SetBinError(ib, hc.GetBinError(ib) / abs(cval))
     return hc
+
+NOMINAL_PATH = os.path.join(out_dir, 'nominal_unfold_dndy.root')
+KEEPBINS_USED = read_keepbins_used(NOMINAL_PATH)
 
 h_double = {}
 h_closure_by_var = {}
@@ -183,7 +198,7 @@ os.makedirs(out_dir, exist_ok=True)
 
 # table
 with open(os.path.join(out_dir, 'systematics_dndy_table.txt'), 'w', encoding='ascii') as f:
-    f.write(f'# dN/dy status branch: keepBins={ACTIVE_KEEPBINS}\n')
+    f.write(f'# dN/dy status branch: keepBinsOverride={ACTIVE_KEEPBINS}, keepBinsUsed={KEEPBINS_USED}\n')
     f.write('# authoritative builder: finalize_dndy_systematics.py\n')
     if toy_override_used:
         f.write('# stat treatment: toy-calibrated per-bin RMSE override\n')
@@ -204,7 +219,8 @@ with open(os.path.join(out_dir, 'systematics_dndy_table.txt'), 'w', encoding='as
 
 # root summary
 fout = ROOT.TFile.Open(os.path.join(out_dir, 'systematics_dndy_summary.root'), 'RECREATE')
-ROOT.TNamed('dNdYStatusBranch', f'keepBins={ACTIVE_KEEPBINS}; builder=finalize_dndy_systematics.py').Write()
+ROOT.TNamed('dNdYStatusBranch', f'keepBinsOverride={ACTIVE_KEEPBINS}; keepBinsUsed={KEEPBINS_USED}; builder=finalize_dndy_systematics.py').Write()
+ROOT.TNamed('dNdYKeepBinsUsed', str(KEEPBINS_USED)).Write()
 ROOT.TNamed(
     'dNdYStatTreatment',
     'toy_override' if toy_override_used else 'bayes_diagonal_errors_no_dedicated_toy_coverage',

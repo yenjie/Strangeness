@@ -74,6 +74,26 @@ static std::vector<double> ParseDoubleList(const std::string &input)
    return values;
 }
 
+static std::vector<double> BuildDefaultDNdYBinEdges(int nbinsNch, int maxVisibleCount)
+{
+   // Resolve the low-count thrust-axis activity bins explicitly. This avoids
+   // compressing most e+e- events into the first two visible bins.
+   const std::vector<double> preferred = {
+      -0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5,
+      8.5, 9.5, 10.5, 12.5, 15.5, 20.5, 25.5, 30.5
+   };
+   if (nbinsNch == static_cast<int>(preferred.size()) - 1 && maxVisibleCount >= 30)
+      return preferred;
+
+   std::vector<double> edges(nbinsNch + 1, 0.0);
+   const double xmin = -0.5;
+   const double xmax = maxVisibleCount + 0.5;
+   const double dx = (xmax - xmin) / nbinsNch;
+   for (int i = 0; i <= nbinsNch; ++i)
+      edges[i] = xmin + i * dx;
+   return edges;
+}
+
 //============================================================
 // Simple parameter container for this analysis
 //============================================================
@@ -269,8 +289,10 @@ public:
 
    // pT binning (copied from par and finalized in ctor)
    std::vector<double> PtBinEdges; // size = NPtBins+1
+   std::vector<double> DNdYBinEdges;
    int NPtBins;
    int NNchBins;                   // number of Nch_tag bins in histograms
+   int MaxDNdYCount;
 
    // Per-(Nch_tag, pT) averages of PID efficiencies (3×3 matrix)
    //
@@ -432,8 +454,10 @@ public:
       , NPIDTieTracks(0)
       , par(apar)
       , PtBinEdges()
+      , DNdYBinEdges()
       , NPtBins(0)
       , NNchBins(0)
+      , MaxDNdYCount(0)
    {
       // Open input
       inf = new TFile(par.input.c_str());
@@ -514,6 +538,9 @@ public:
       const int nbinsNch  = maxNchTag / 4 + 1;   // same choice as original macro
 
       NNchBins = nbinsNch;
+      DNdYBinEdges = BuildDefaultDNdYBinEdges(nbinsNch, std::min(maxNchTag, 30));
+      MaxDNdYCount = static_cast<int>(std::floor(DNdYBinEdges.back() - 0.5));
+      const double *dndyEdgesArray = &(DNdYBinEdges[0]);
 
       // Kaon, Proton and Pion Spectra vs NchTag
       hK = new TH1D("hK",
@@ -584,7 +611,9 @@ public:
       hKoverPiCorrectedDNdEta = nullptr;
       hPoverPiCorrectedDNdEta = nullptr;
 
-      hKDNdY = (TH1D *)hK->Clone("hKDNdY");
+      hKDNdY = new TH1D("hKDNdY",
+                        "Kaon candidates vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Yield (sum over tracks)",
+                        static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray);
       hKDNdY->SetTitle("Kaon candidates vs reco dN_{ch}/dy(|y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);Yield (sum over tracks)");
       hKDNdY->Reset();
       hKDNdY->Sumw2();
@@ -697,22 +726,34 @@ public:
       hPPtCorrectedDNdEta->Reset();
       hPPtCorrectedDNdEta->Sumw2();
 
-      hKPtDNdY = (TH2D *)hKPt->Clone("hKPtDNdY");
+      hKPtDNdY = new TH2D("hKPtDNdY",
+                         "Kaon candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)",
+                         static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray,
+                         NPtBins, ptEdgesArray);
       hKPtDNdY->SetTitle("Kaon candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
       hKPtDNdY->Reset();
       hKPtDNdY->Sumw2();
 
-      hPiPtDNdY = (TH2D *)hPiPt->Clone("hPiPtDNdY");
+      hPiPtDNdY = new TH2D("hPiPtDNdY",
+                          "Pion candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)",
+                          static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray,
+                          NPtBins, ptEdgesArray);
       hPiPtDNdY->SetTitle("Pion candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
       hPiPtDNdY->Reset();
       hPiPtDNdY->Sumw2();
 
-      hPPtDNdY = (TH2D *)hPPt->Clone("hPPtDNdY");
+      hPPtDNdY = new TH2D("hPPtDNdY",
+                         "Proton candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)",
+                         static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray,
+                         NPtBins, ptEdgesArray);
       hPPtDNdY->SetTitle("Proton candidates;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
       hPPtDNdY->Reset();
       hPPtDNdY->Sumw2();
 
-      hUPtDNdY = (TH2D *)hUPt->Clone("hUPtDNdY");
+      hUPtDNdY = new TH2D("hUPtDNdY",
+                         "Untagged charged tracks;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)",
+                         static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray,
+                         NPtBins, ptEdgesArray);
       hUPtDNdY->SetTitle("Untagged charged tracks;dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5);p_{T} (GeV/c)");
       hUPtDNdY->Reset();
       hUPtDNdY->Sumw2();
@@ -827,8 +868,8 @@ public:
 
       hDNdYResponse = new TH2D("hDNdYResponse",
                                "dN_{ch}/dy response wrt thrust axis;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);dN_{ch}/dy (reco, thrust axis, |y_{T}|<0.5)",
-                               nbinsNch, nchMin, nchMax,
-                               nbinsNch, nchMin, nchMax);
+                               static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray,
+                               static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray);
       hDNdYResponse->Sumw2();
 
       hDNdYResponseK = (TH2D *)hDNdYResponse->Clone("hDNdYResponseK");
@@ -846,7 +887,9 @@ public:
       hDNdYResponseP->Reset();
       hDNdYResponseP->Sumw2();
 
-      hDNdYTrue = (TH1D *)hK->Clone("hDNdYTrue");
+      hDNdYTrue = new TH1D("hDNdYTrue",
+                           "True dN_{ch}/dy distribution wrt thrust axis (|y_{T}|<0.5);dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);Events",
+                           static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray);
       hDNdYTrue->SetTitle("True dN_{ch}/dy distribution wrt thrust axis (|y_{T}|<0.5);dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);Events");
       hDNdYTrue->Reset();
       hDNdYTrue->Sumw2();
@@ -856,17 +899,19 @@ public:
       hDNdYReco->Reset();
       hDNdYReco->Sumw2();
 
-      hKTruedNdY = (TH1D *)hK->Clone("hKTruedNdY");
+      hKTruedNdY = new TH1D("hKTruedNdY",
+                            "Generator-level K yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{K}^{gen}",
+                            static_cast<int>(DNdYBinEdges.size()) - 1, dndyEdgesArray);
       hKTruedNdY->SetTitle("Generator-level K yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{K}^{gen}");
       hKTruedNdY->Reset();
       hKTruedNdY->Sumw2();
 
-      hPiTruedNdY = (TH1D *)hK->Clone("hPiTruedNdY");
+      hPiTruedNdY = (TH1D *)hKTruedNdY->Clone("hPiTruedNdY");
       hPiTruedNdY->SetTitle("Generator-level #pi yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{#pi}^{gen}");
       hPiTruedNdY->Reset();
       hPiTruedNdY->Sumw2();
 
-      hPTruedNdY = (TH1D *)hK->Clone("hPTruedNdY");
+      hPTruedNdY = (TH1D *)hKTruedNdY->Clone("hPTruedNdY");
       hPTruedNdY->SetTitle("Generator-level p yield vs true dN_{ch}/dy;dN_{ch}/dy (true, thrust axis, |y_{T}|<0.5);N_{p}^{gen}");
       hPTruedNdY->Reset();
       hPTruedNdY->Sumw2();
@@ -1259,8 +1304,8 @@ public:
             NchTag = par.MaxNchTag;
          if (NchEta05Reco > par.MaxNchTag)
             NchEta05Reco = par.MaxNchTag;
-         if (NchY05Reco > par.MaxNchTag)
-            NchY05Reco = par.MaxNchTag;
+         if (NchY05Reco > MaxDNdYCount)
+            NchY05Reco = MaxDNdYCount;
 
          // Bin index along Nch_tag axis (1..NNchBins)
          int nchBin = hK->GetXaxis()->FindBin(static_cast<double>(NchTag));
@@ -1346,8 +1391,8 @@ public:
          }
          if (nChEta05True > par.MaxNchTag)
             nChEta05True = par.MaxNchTag;
-         if (nChY05True > par.MaxNchTag)
-            nChY05True = par.MaxNchTag;
+         if (nChY05True > MaxDNdYCount)
+            nChY05True = MaxDNdYCount;
 
          // Note: reco correction always uses efficiency branches from the tree.
          // MC generator truth is produced in a separate IsGen=true run.

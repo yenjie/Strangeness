@@ -71,6 +71,7 @@ int main(int argc, char *argv[]) {
     std::cerr << "Missing dNdY template histogram in " << templatePath << "\n";
     return 1;
   }
+  const int maxVisibleCount = static_cast<int>(std::floor(templateHist->GetXaxis()->GetBinUpEdge(templateHist->GetNbinsX()) - 0.5));
 
   auto hKCounts = std::unique_ptr<TH1D>(static_cast<TH1D *>(templateHist->Clone("hKCountsTruth_dNdY")));
   auto hPiCounts = std::unique_ptr<TH1D>(static_cast<TH1D *>(templateHist->Clone("hPiCountsTruth_dNdY")));
@@ -174,11 +175,12 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    hDNdY->Fill(static_cast<double>(nChY05));
-    hKCounts->Fill(static_cast<double>(nChY05), nKPt0405);
-    hPiCounts->Fill(static_cast<double>(nChY05), nPiPt0405);
+    const int nChY05Clamped = std::min(nChY05, maxVisibleCount);
+    hDNdY->Fill(static_cast<double>(nChY05Clamped));
+    hKCounts->Fill(static_cast<double>(nChY05Clamped), nKPt0405);
+    hPiCounts->Fill(static_cast<double>(nChY05Clamped), nPiPt0405);
     if (nPiPt0405 > 0) {
-      pRatio->Fill(static_cast<double>(nChY05), static_cast<double>(nKPt0405) / static_cast<double>(nPiPt0405));
+      pRatio->Fill(static_cast<double>(nChY05Clamped), static_cast<double>(nKPt0405) / static_cast<double>(nPiPt0405));
     }
     ++nAccepted;
   }

@@ -18,14 +18,43 @@
 
 namespace
 {
+   std::vector<double> ExtractAxisEdges(const TAxis *axis, int keepBins = -1, bool collapseTail = false)
+   {
+      const int nb = axis->GetNbins();
+      if (keepBins <= 0 || keepBins > nb)
+         keepBins = nb;
+
+      std::vector<double> edges;
+      edges.reserve(keepBins + 1);
+      for (int ib = 1; ib <= keepBins; ++ib)
+         edges.push_back(axis->GetBinLowEdge(ib));
+      edges.push_back(collapseTail && keepBins < nb ? axis->GetBinUpEdge(nb) : axis->GetBinUpEdge(keepBins));
+      return edges;
+   }
+
+   TH1D *MakeHist1DWithEdges(const char *name, const char *title, const std::vector<double> &edges)
+   {
+      TH1D *h = new TH1D(name, title, static_cast<int>(edges.size()) - 1, edges.data());
+      h->SetDirectory(nullptr);
+      h->Sumw2();
+      return h;
+   }
+
+   TH2D *MakeHist2DWithEdges(const char *name, const char *title,
+                             const std::vector<double> &xEdges, const std::vector<double> &yEdges)
+   {
+      TH2D *h = new TH2D(name, title,
+                         static_cast<int>(xEdges.size()) - 1, xEdges.data(),
+                         static_cast<int>(yEdges.size()) - 1, yEdges.data());
+      h->SetDirectory(nullptr);
+      h->Sumw2();
+      return h;
+   }
+
    TH1D *CollapseTail1D(const TH1D *src, int keepBins, const char *name)
    {
       keepBins = std::max(1, std::min(keepBins, src->GetNbinsX()));
-      const double xmin = src->GetXaxis()->GetXmin();
-      const double xmax = src->GetXaxis()->GetBinUpEdge(keepBins);
-      TH1D *out = new TH1D(name, src->GetTitle(), keepBins, xmin, xmax);
-      out->SetDirectory(nullptr);
-      out->Sumw2();
+      TH1D *out = MakeHist1DWithEdges(name, src->GetTitle(), ExtractAxisEdges(src->GetXaxis(), keepBins, true));
 
       for (int ib = 1; ib <= src->GetNbinsX(); ++ib)
       {
@@ -43,13 +72,9 @@ namespace
    {
       keepBinsX = std::max(1, std::min(keepBinsX, src->GetNbinsX()));
       keepBinsY = std::max(1, std::min(keepBinsY, src->GetNbinsY()));
-      const double xmin = src->GetXaxis()->GetXmin();
-      const double xmax = src->GetXaxis()->GetBinUpEdge(keepBinsX);
-      const double ymin = src->GetYaxis()->GetXmin();
-      const double ymax = src->GetYaxis()->GetBinUpEdge(keepBinsY);
-      TH2D *out = new TH2D(name, src->GetTitle(), keepBinsX, xmin, xmax, keepBinsY, ymin, ymax);
-      out->SetDirectory(nullptr);
-      out->Sumw2();
+      TH2D *out = MakeHist2DWithEdges(name, src->GetTitle(),
+                                      ExtractAxisEdges(src->GetXaxis(), keepBinsX, true),
+                                      ExtractAxisEdges(src->GetYaxis(), keepBinsY, true));
 
       for (int ix = 1; ix <= src->GetNbinsX(); ++ix)
       {
@@ -88,11 +113,7 @@ namespace
    {
       const int nTrue = respTrueReco->GetNbinsX();
       const int nReco = respTrueReco->GetNbinsY();
-      TH1D *h = new TH1D(name, title, nReco,
-                         respTrueReco->GetYaxis()->GetXmin(),
-                         respTrueReco->GetYaxis()->GetXmax());
-      h->SetDirectory(nullptr);
-      h->Sumw2();
+      TH1D *h = MakeHist1DWithEdges(name, title, ExtractAxisEdges(respTrueReco->GetYaxis()));
 
       for (int t = 1; t <= nTrue; ++t)
       {
@@ -143,16 +164,9 @@ namespace
    TH2D *RebinResponseToMeasurementBinning(const TH2D *respFine, const TH1D *measTemplate, const char *name)
    {
       const int nCoarse = measTemplate->GetNbinsX();
-      TH2D *out = new TH2D(name,
-                           respFine->GetTitle(),
-                           nCoarse,
-                           measTemplate->GetXaxis()->GetXmin(),
-                           measTemplate->GetXaxis()->GetXmax(),
-                           nCoarse,
-                           measTemplate->GetXaxis()->GetXmin(),
-                           measTemplate->GetXaxis()->GetXmax());
-      out->SetDirectory(nullptr);
-      out->Sumw2();
+      TH2D *out = MakeHist2DWithEdges(name, respFine->GetTitle(),
+                                      ExtractAxisEdges(measTemplate->GetXaxis()),
+                                      ExtractAxisEdges(measTemplate->GetXaxis()));
 
       for (int ix = 1; ix <= respFine->GetNbinsX(); ++ix)
       {
@@ -178,13 +192,7 @@ namespace
    TH1D *RebinPriorToMeasurementBinning(const TH1D *priorFine, const TH1D *measTemplate, const char *name)
    {
       const int nCoarse = measTemplate->GetNbinsX();
-      TH1D *out = new TH1D(name,
-                           priorFine->GetTitle(),
-                           nCoarse,
-                           measTemplate->GetXaxis()->GetXmin(),
-                           measTemplate->GetXaxis()->GetXmax());
-      out->SetDirectory(nullptr);
-      out->Sumw2();
+      TH1D *out = MakeHist1DWithEdges(name, priorFine->GetTitle(), ExtractAxisEdges(measTemplate->GetXaxis()));
 
       for (int ib = 1; ib <= priorFine->GetNbinsX(); ++ib)
       {
@@ -346,11 +354,8 @@ namespace
       TMatrixD B = V * Splus * Ut;
       TVectorD x = B * m;
 
-      TH1D *h = new TH1D(name, name, nTrue,
-                         respTrueReco->GetXaxis()->GetXmin(),
-                         respTrueReco->GetXaxis()->GetXmax());
+      TH1D *h = MakeHist1DWithEdges(name, name, ExtractAxisEdges(respTrueReco->GetXaxis()));
       h->Reset();
-      h->SetDirectory(nullptr);
       for (int t = 1; t <= nTrue; ++t)
       {
          h->SetBinContent(t, std::max(0.0, x(t - 1)));

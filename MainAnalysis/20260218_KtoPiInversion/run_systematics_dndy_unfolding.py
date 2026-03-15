@@ -10,7 +10,7 @@ import ROOT
 
 ROOT.gROOT.SetBatch(True)
 FORCE_RERUN = os.environ.get("FORCE_RERUN", "0") == "1"
-ACTIVE_KEEPBINS = 8
+ACTIVE_KEEPBINS = -1
 KEEPBINS_OVERRIDE = int(os.environ.get("KEEPBINS_OVERRIDE", str(ACTIVE_KEEPBINS)))
 OUT_DIR = os.environ.get("KPI_DNDY_DIR", "output/systematics_20260314_dndy")
 PRECOMPUTED_DIR = os.environ.get("KPI_DNDY_INPUT_DIR", "output/systematics_20260314_dndy_inputs")

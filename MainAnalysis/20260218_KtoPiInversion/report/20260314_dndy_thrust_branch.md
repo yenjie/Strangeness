@@ -37,6 +37,17 @@
 
 These match the currently quoted `dN_ch/deta` branch strategy: binning envelope plus residual, unfolding, and PID-SF propagation.
 
+## Current thrust-axis binning
+- The `dN_ch/dy` branch no longer reuses the coarse uniform `Nch` binning.
+- The active booking now resolves the populated low-count region explicitly with
+  variable bin edges:
+  - `[-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 12.5, 15.5, 20.5, 25.5, 30.5]`
+- The unfolding then auto-merges only the sparse tail.
+- In the current nominal run:
+  - `keepBinsOverride = -1`
+  - `keepBinsUsed = 14`
+  - the last visible bin spans `15.5 < dN_ch/dy < 30.5`
+
 ## Statistical treatment
 - A dedicated `dN/dy` toy-coverage calibration was run in:
   - `result/20260314/dndy_toy_coverage/`
@@ -78,7 +89,9 @@ These match the currently quoted `dN_ch/deta` branch strategy: binning envelope 
   - `overleaf_repo_git/main.pdf`
 
 ## Current limitations
-- The highest-activity `dN_ch/dy` bin is still the merged overflow bin from `keepBins=8`.
+- The highest-activity `dN_ch/dy` point is still a merged tail bin, but it is
+  now the auto-selected `keepBinsUsed=14` tail bin rather than the old
+  `keepBins=8` overflow treatment.
 - The thrust-axis `X-SCAPE/JETSCAPE` curves remain explicitly exploratory.
   They are based on the current local colorless and hybrid-hadronization
   controls, and the hybrid result still shows strong hadronization-model
