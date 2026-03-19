@@ -118,6 +118,228 @@ def build_ratio(num, den, name, title):
     return h
 
 
+def fold_truth_1d(truth, resp_true_reco, name, title):
+    n_true = resp_true_reco.GetNbinsX()
+    n_reco = resp_true_reco.GetNbinsY()
+    h = ROOT.TH1D(name, title, n_reco, resp_true_reco.GetYaxis().GetXmin(), resp_true_reco.GetYaxis().GetXmax())
+    h.SetDirectory(0)
+    h.Sumw2()
+    for it in range(1, n_true + 1):
+        truth_val = truth.GetBinContent(it)
+        truth_err = truth.GetBinError(it)
+        col_sum = 0.0
+        for ir in range(1, n_reco + 1):
+            col_sum += resp_true_reco.GetBinContent(it, ir)
+        if col_sum <= 0.0:
+            continue
+        for ir in range(1, n_reco + 1):
+            prob = resp_true_reco.GetBinContent(it, ir) / col_sum
+            h.SetBinContent(ir, h.GetBinContent(ir) + prob * truth_val)
+            err2 = h.GetBinError(ir) ** 2 + (prob * truth_err) ** 2
+            h.SetBinError(ir, math.sqrt(max(0.0, err2)))
+    return h
+
+
+def rms_distance_from_unity(h):
+    vals = []
+    for ib in range(1, h.GetNbinsX() + 1):
+        y = h.GetBinContent(ib)
+        ey = h.GetBinError(ib)
+        if y == 0.0 and ey == 0.0:
+            continue
+        vals.append((y - 1.0) ** 2)
+    return math.sqrt(sum(vals) / len(vals)) if vals else 0.0
+
+
+def max_positive(*hists):
+    values = []
+    for h in hists:
+        for ib in range(1, h.GetNbinsX() + 1):
+            v = h.GetBinContent(ib)
+            if v > 0.0:
+                values.append(v)
+    return max(values) if values else 1.0
+
+
+def draw_order_swap_refolding_comparison(h_nom_mc, h_nom_data, h_swap_mc, h_swap_data, out_path):
+    c = ROOT.TCanvas("c_order_swap_refold", "", 900, 650)
+    c.SetTicks(1, 1)
+    frame = h_nom_mc.Clone("hFrameOrderSwapRefold")
+    frame.Reset()
+    frame.SetTitle(";dN_{ch}^{reco}/d#eta (|#eta|<0.5);Refolded / reco")
+    frame.SetMinimum(0.88)
+    frame.SetMaximum(1.12)
+    style_frame(frame)
+    frame.GetYaxis().SetNdivisions(505)
+    frame.Draw()
+    line = ROOT.TLine(frame.GetXaxis().GetXmin(), 1.0, frame.GetXaxis().GetXmax(), 1.0)
+    line.SetLineStyle(2)
+    line.SetLineWidth(2)
+    line.Draw("same")
+
+    for h, color, marker, style in [
+        (h_nom_mc, ROOT.kBlack, 20, 1),
+        (h_nom_data, ROOT.kGray + 2, 24, 1),
+        (h_swap_mc, ROOT.kAzure + 1, 21, 1),
+        (h_swap_data, ROOT.kRed + 1, 25, 1),
+    ]:
+        h.SetLineColor(color)
+        h.SetMarkerColor(color)
+        h.SetMarkerStyle(marker)
+        h.SetLineWidth(2)
+        h.SetLineStyle(style)
+        h.Draw("E1 same")
+
+    leg = ROOT.TLegend(0.18, 0.72, 0.88, 0.89)
+    style_legend(leg)
+    leg.SetNColumns(2)
+    leg.SetTextSize(0.034)
+    leg.AddEntry(h_nom_mc, "Nominal MC refolding", "lep")
+    leg.AddEntry(h_nom_data, "Nominal data refolding", "lep")
+    leg.AddEntry(h_swap_mc, "Order-swapped MC refolding", "lep")
+    leg.AddEntry(h_swap_data, "Order-swapped data refolding", "lep")
+    leg.Draw()
+
+    lab = ROOT.TLatex()
+    lab.SetNDC()
+    lab.SetTextSize(0.034)
+    lab.DrawLatex(0.20, 0.66, f"Nominal RMS: MC={rms_distance_from_unity(h_nom_mc):.3f}, data={rms_distance_from_unity(h_nom_data):.3f}")
+    lab.DrawLatex(0.20, 0.61, f"Order-swapped RMS: MC={rms_distance_from_unity(h_swap_mc):.3f}, data={rms_distance_from_unity(h_swap_data):.3f}")
+    c.SaveAs(out_path)
+    c.SaveAs(out_path.replace(".pdf", ".png"))
+
+
+def draw_order_swap_closure_comparison(h_nom_closure, h_swap_closure, out_path):
+    c = ROOT.TCanvas("c_order_swap_closure", "", 900, 900)
+    c.Divide(1, 2)
+    pad1 = c.cd(1)
+    pad1.SetPad(0.0, 0.33, 1.0, 1.0)
+    pad1.SetBottomMargin(0.02)
+    frame = h_nom_closure.Clone("hFrameOrderSwapClosure")
+    frame.Reset()
+    frame.SetTitle(";dN_{ch}/d#eta (|#eta|<0.5);Unfolded / MC truth")
+    frame.SetMinimum(0.90)
+    frame.SetMaximum(1.20)
+    style_frame(frame)
+    frame.Draw()
+    line = ROOT.TLine(frame.GetXaxis().GetXmin(), 1.0, frame.GetXaxis().GetXmax(), 1.0)
+    line.SetLineStyle(2)
+    line.SetLineWidth(2)
+    line.Draw("same")
+    h_nom_closure.SetLineColor(ROOT.kBlack)
+    h_nom_closure.SetMarkerColor(ROOT.kBlack)
+    h_nom_closure.SetMarkerStyle(20)
+    h_nom_closure.SetLineWidth(2)
+    h_nom_closure.Draw("E1 same")
+    h_swap_closure.SetLineColor(ROOT.kRed + 1)
+    h_swap_closure.SetMarkerColor(ROOT.kRed + 1)
+    h_swap_closure.SetMarkerStyle(24)
+    h_swap_closure.SetLineWidth(2)
+    h_swap_closure.Draw("E1 same")
+    leg = ROOT.TLegend(0.18, 0.75, 0.58, 0.88)
+    style_legend(leg)
+    leg.SetTextSize(0.038)
+    leg.AddEntry(h_nom_closure, "Nominal closure", "lep")
+    leg.AddEntry(h_swap_closure, "Order-swapped closure", "lep")
+    leg.Draw()
+    lab = ROOT.TLatex()
+    lab.SetNDC()
+    lab.SetTextSize(0.035)
+    lab.DrawLatex(0.60, 0.84, f"Nominal RMS = {rms_distance_from_unity(h_nom_closure):.3f}")
+    lab.DrawLatex(0.60, 0.79, f"Order-swapped RMS = {rms_distance_from_unity(h_swap_closure):.3f}")
+
+    pad2 = c.cd(2)
+    pad2.SetPad(0.0, 0.0, 1.0, 0.33)
+    pad2.SetTopMargin(0.03)
+    pad2.SetBottomMargin(0.28)
+    ratio = build_ratio(h_swap_closure, h_nom_closure, "hOrderSwapClosureOverNominal", ";dN_{ch}/d#eta (|#eta|<0.5);Swapped / nominal")
+    rframe = ratio.Clone("hFrameOrderSwapClosureRatio")
+    rframe.Reset()
+    rframe.SetMinimum(0.90)
+    rframe.SetMaximum(1.15)
+    style_frame(rframe)
+    rframe.GetYaxis().SetNdivisions(505)
+    rframe.Draw()
+    line2 = ROOT.TLine(rframe.GetXaxis().GetXmin(), 1.0, rframe.GetXaxis().GetXmax(), 1.0)
+    line2.SetLineStyle(2)
+    line2.Draw("same")
+    ratio.SetLineColor(ROOT.kRed + 1)
+    ratio.SetMarkerColor(ROOT.kRed + 1)
+    ratio.SetMarkerStyle(24)
+    ratio.SetLineWidth(2)
+    ratio.Draw("E1 same")
+    c.SaveAs(out_path)
+    c.SaveAs(out_path.replace(".pdf", ".png"))
+    return ratio
+
+
+def draw_order_swap_systematics_comparison(h_nominal, h_nom_sys, h_swap, out_path):
+    h_shift = h_nominal.Clone("hOrderSwapMethodShift")
+    h_shift.SetDirectory(0)
+    h_shift.Reset()
+    h_ratio = h_nominal.Clone("hOrderSwapShiftOverNominalSys")
+    h_ratio.SetDirectory(0)
+    h_ratio.Reset()
+    for ib in range(1, h_nominal.GetNbinsX() + 1):
+        shift = abs(h_swap.GetBinContent(ib) - h_nominal.GetBinContent(ib))
+        sys = h_nom_sys.GetBinContent(ib)
+        h_shift.SetBinContent(ib, shift)
+        h_ratio.SetBinContent(ib, shift / sys if sys > 0.0 else 0.0)
+
+    c = ROOT.TCanvas("c_order_swap_sys", "", 900, 900)
+    c.Divide(1, 2)
+    pad1 = c.cd(1)
+    pad1.SetPad(0.0, 0.33, 1.0, 1.0)
+    pad1.SetBottomMargin(0.02)
+    frame = h_nom_sys.Clone("hFrameOrderSwapSys")
+    frame.Reset()
+    frame.SetTitle(";dN_{ch}/d#eta (|#eta|<0.5);Absolute uncertainty / shift")
+    frame.SetMinimum(0.0)
+    frame.SetMaximum(1.25 * max(max_positive(h_nom_sys, h_shift), 1e-3))
+    style_frame(frame)
+    frame.Draw()
+    h_nom_sys.SetLineColor(ROOT.kBlack)
+    h_nom_sys.SetMarkerColor(ROOT.kBlack)
+    h_nom_sys.SetMarkerStyle(20)
+    h_nom_sys.SetLineWidth(2)
+    h_nom_sys.Draw("PL same")
+    h_shift.SetLineColor(ROOT.kRed + 1)
+    h_shift.SetMarkerColor(ROOT.kRed + 1)
+    h_shift.SetMarkerStyle(24)
+    h_shift.SetLineWidth(2)
+    h_shift.Draw("PL same")
+    leg = ROOT.TLegend(0.18, 0.74, 0.70, 0.88)
+    style_legend(leg)
+    leg.SetTextSize(0.038)
+    leg.AddEntry(h_nom_sys, "Nominal total systematic", "lp")
+    leg.AddEntry(h_shift, "Order-swapped method shift", "lp")
+    leg.Draw()
+
+    pad2 = c.cd(2)
+    pad2.SetPad(0.0, 0.0, 1.0, 0.33)
+    pad2.SetTopMargin(0.03)
+    pad2.SetBottomMargin(0.28)
+    rframe = h_ratio.Clone("hFrameOrderSwapSysRatio")
+    rframe.Reset()
+    rframe.SetTitle(";dN_{ch}/d#eta (|#eta|<0.5);Shift / nominal syst.")
+    rframe.SetMinimum(0.0)
+    rframe.SetMaximum(2.2)
+    style_frame(rframe)
+    rframe.GetYaxis().SetNdivisions(505)
+    rframe.Draw()
+    line = ROOT.TLine(rframe.GetXaxis().GetXmin(), 1.0, rframe.GetXaxis().GetXmax(), 1.0)
+    line.SetLineStyle(2)
+    line.Draw("same")
+    h_ratio.SetLineColor(ROOT.kRed + 1)
+    h_ratio.SetMarkerColor(ROOT.kRed + 1)
+    h_ratio.SetMarkerStyle(24)
+    h_ratio.SetLineWidth(2)
+    h_ratio.Draw("PL same")
+    c.SaveAs(out_path)
+    c.SaveAs(out_path.replace(".pdf", ".png"))
+    return h_shift, h_ratio
+
+
 def load_obj(f, name):
     obj = f.Get(name)
     if not obj:
@@ -305,8 +527,61 @@ def main():
 
     h_nominal = load_obj(f_nom, "hDoubleRatioNominal_dNdEta")
     h_nominal_sys = load_obj(f_nom, "hSysTotal_dNdEta")
+    h_nominal_closure = load_obj(f_nom_unfold, "hClosureBayes_dNdEta")
+    h_nominal_refold_mc = load_obj(f_nom_unfold, "hRefoldRecoClosureMc_dNdEta")
+    h_nominal_refold_data = load_obj(f_nom_unfold, "hRefoldRecoClosureData_dNdEta")
+    h_ratio_mc_reco = load_obj(f_nom_unfold, "hRatioMcReco_dNdEta")
+    h_ratio_data_reco = load_obj(f_nom_unfold, "hRatioDataReco_dNdEta")
+    h_resp_k_nom = load_obj(f_nom_unfold, "hDNdEtaResponseKRebinned")
+    h_resp_pi_nom = load_obj(f_nom_unfold, "hDNdEtaResponsePiRebinned")
     h_compare_ratio = build_ratio(h_double_ratio_resid, h_nominal, "hOrderSwapOverNominal", ";dN_{ch}/d#eta (|#eta|<0.5);Order-swapped / nominal")
     max_abs, max_rel = summarize_shift(h_nominal, h_double_ratio_resid)
+
+    h_k_mc_true = integrate_pt(corrected_mc["K"], "hOrderSwapKMcTrue1D")
+    h_pi_mc_true = integrate_pt(corrected_mc["Pi"], "hOrderSwapPiMcTrue1D")
+    h_k_data_true = integrate_pt(corrected_data["K"], "hOrderSwapKDataTrue1D")
+    h_pi_data_true = integrate_pt(corrected_data["Pi"], "hOrderSwapPiDataTrue1D")
+    h_k_mc_refold = fold_truth_1d(h_k_mc_true, h_resp_k_nom, "hOrderSwapKMcRefold", "MC K refolded reco")
+    h_pi_mc_refold = fold_truth_1d(h_pi_mc_true, h_resp_pi_nom, "hOrderSwapPiMcRefold", "MC #pi refolded reco")
+    h_k_data_refold = fold_truth_1d(h_k_data_true, h_resp_k_nom, "hOrderSwapKDataRefold", "Data K refolded reco")
+    h_pi_data_refold = fold_truth_1d(h_pi_data_true, h_resp_pi_nom, "hOrderSwapPiDataRefold", "Data #pi refolded reco")
+    h_ratio_mc_refold = build_ratio(h_k_mc_refold, h_pi_mc_refold, "hOrderSwapRatioMcRefold", "MC K/#pi refolded")
+    h_ratio_data_refold = build_ratio(h_k_data_refold, h_pi_data_refold, "hOrderSwapRatioDataRefold", "Data K/#pi refolded")
+    h_refold_closure_mc = build_ratio(h_ratio_mc_refold, h_ratio_mc_reco, "hOrderSwapRefoldRecoClosureMc", ";dN_{ch}^{reco}/d#eta (|#eta|<0.5);Refolded / reco")
+    h_refold_closure_data = build_ratio(h_ratio_data_refold, h_ratio_data_reco, "hOrderSwapRefoldRecoClosureData", ";dN_{ch}^{reco}/d#eta (|#eta|<0.5);Refolded / reco")
+
+    h_closure_compare_ratio = draw_order_swap_closure_comparison(
+        h_nominal_closure,
+        h_closure,
+        os.path.join(out_dir, "OrderSwapped_DNdEta_ClosureComparison.pdf"),
+    )
+    draw_order_swap_refolding_comparison(
+        h_nominal_refold_mc,
+        h_nominal_refold_data,
+        h_refold_closure_mc,
+        h_refold_closure_data,
+        os.path.join(out_dir, "OrderSwapped_DNdEta_RatioRefoldingValidation.pdf"),
+    )
+    h_method_shift, h_shift_over_sys = draw_order_swap_systematics_comparison(
+        h_nominal,
+        h_nominal_sys,
+        h_double_ratio_resid,
+        os.path.join(out_dir, "OrderSwapped_DNdEta_MethodShiftVsSystematics.pdf"),
+    )
+
+    refold_rms_nom_mc = rms_distance_from_unity(h_nominal_refold_mc)
+    refold_rms_nom_data = rms_distance_from_unity(h_nominal_refold_data)
+    refold_rms_swap_mc = rms_distance_from_unity(h_refold_closure_mc)
+    refold_rms_swap_data = rms_distance_from_unity(h_refold_closure_data)
+    closure_rms_nom = rms_distance_from_unity(h_nominal_closure)
+    closure_rms_swap = rms_distance_from_unity(h_closure)
+    max_shift_over_sys = 0.0
+    max_shift_over_sys_bin = 0
+    for ib in range(1, h_shift_over_sys.GetNbinsX() + 1):
+        val = h_shift_over_sys.GetBinContent(ib)
+        if val > max_shift_over_sys:
+            max_shift_over_sys = val
+            max_shift_over_sys_bin = ib
 
     fout = ROOT.TFile.Open(os.path.join(out_dir, "order_swapped_dndeta_crosscheck.root"), "RECREATE")
     ROOT.TNamed("crosscheck_definition", "Observed tagged yields are fake-corrected and unfolded in dN/deta first, then untangled with a truth-matched 3x3 matrix and corrected with a truth-matched generator efficiency.").Write()
@@ -317,7 +592,32 @@ def main():
     ROOT.TNamed("pseudoInverseCells", str(pseudo_inverse_cells)).Write()
     ROOT.TNamed("maxAbsShift", f"{max_abs:.6f}").Write()
     ROOT.TNamed("maxRelShift", f"{max_rel:.6f}").Write()
-    for obj in [h_mc_ratio_true, h_mc_ratio_cross, h_data_ratio_cross, h_closure, h_double_ratio, h_double_ratio_resid, h_nominal, h_compare_ratio]:
+    for obj in [
+        h_mc_ratio_true,
+        h_mc_ratio_cross,
+        h_data_ratio_cross,
+        h_closure,
+        h_double_ratio,
+        h_double_ratio_resid,
+        h_nominal,
+        h_compare_ratio,
+        h_nominal_closure,
+        h_nominal_refold_mc,
+        h_nominal_refold_data,
+        h_ratio_mc_reco,
+        h_ratio_data_reco,
+        h_k_mc_refold,
+        h_pi_mc_refold,
+        h_k_data_refold,
+        h_pi_data_refold,
+        h_ratio_mc_refold,
+        h_ratio_data_refold,
+        h_refold_closure_mc,
+        h_refold_closure_data,
+        h_closure_compare_ratio,
+        h_method_shift,
+        h_shift_over_sys,
+    ]:
         obj.Write()
     h_nominal_sys.Write("hNominalSysTotal_dNdEta")
     for k in ["K", "Pi", "P"]:
@@ -395,14 +695,33 @@ def main():
         out.write(f"pseudoInverseCells = {pseudo_inverse_cells}\n")
         out.write(f"maxAbsShift = {max_abs:.6f}\n")
         out.write(f"maxRelShift = {max_rel:.6f}\n")
+        out.write(f"nominalClosureRMS = {closure_rms_nom:.6f}\n")
+        out.write(f"orderSwappedClosureRMS = {closure_rms_swap:.6f}\n")
+        out.write(f"nominalRefoldRMSMc = {refold_rms_nom_mc:.6f}\n")
+        out.write(f"nominalRefoldRMSData = {refold_rms_nom_data:.6f}\n")
+        out.write(f"orderSwappedRefoldRMSMc = {refold_rms_swap_mc:.6f}\n")
+        out.write(f"orderSwappedRefoldRMSData = {refold_rms_swap_data:.6f}\n")
+        out.write(f"maxShiftOverNominalSys = {max_shift_over_sys:.6f}\n")
+        out.write(f"maxShiftOverNominalSysBin = {max_shift_over_sys_bin}\n")
         out.write("bin center nominal order_swapped ratio closure\n")
         for ib in range(1, h_nominal.GetNbinsX() + 1):
             out.write(
                 f"{ib} {h_nominal.GetXaxis().GetBinCenter(ib):.3f} {h_nominal.GetBinContent(ib):.6f} {h_double_ratio_resid.GetBinContent(ib):.6f} {h_compare_ratio.GetBinContent(ib):.6f} {h_closure.GetBinContent(ib):.6f}\n"
             )
+        out.write("bin nominalSys methodShift shiftOverSys nominalClosure orderSwapClosure nominalRefoldMc nominalRefoldData orderSwapRefoldMc orderSwapRefoldData\n")
+        for ib in range(1, h_nominal.GetNbinsX() + 1):
+            out.write(
+                f"{ib} {h_nominal_sys.GetBinContent(ib):.6f} {h_method_shift.GetBinContent(ib):.6f} {h_shift_over_sys.GetBinContent(ib):.6f} "
+                f"{h_nominal_closure.GetBinContent(ib):.6f} {h_closure.GetBinContent(ib):.6f} "
+                f"{h_nominal_refold_mc.GetBinContent(ib):.6f} {h_nominal_refold_data.GetBinContent(ib):.6f} "
+                f"{h_refold_closure_mc.GetBinContent(ib):.6f} {h_refold_closure_data.GetBinContent(ib):.6f}\n"
+            )
 
     print(f"Wrote {os.path.join(out_dir, 'order_swapped_dndeta_crosscheck.root')}")
     print(f"Wrote {os.path.join(out_dir, 'OrderSwapped_DNdEta_Comparison.pdf')}")
+    print(f"Wrote {os.path.join(out_dir, 'OrderSwapped_DNdEta_ClosureComparison.pdf')}")
+    print(f"Wrote {os.path.join(out_dir, 'OrderSwapped_DNdEta_RatioRefoldingValidation.pdf')}")
+    print(f"Wrote {os.path.join(out_dir, 'OrderSwapped_DNdEta_MethodShiftVsSystematics.pdf')}")
     print(f"Max absolute shift: {max_abs:.6f}")
     print(f"Max relative shift: {max_rel:.6f}")
 

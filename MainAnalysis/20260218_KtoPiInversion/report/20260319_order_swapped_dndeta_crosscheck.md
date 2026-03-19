@@ -56,6 +56,9 @@ Main outputs:
 - `output/order_swapped_dndeta/order_swapped_dndeta_crosscheck.root`
 - `output/order_swapped_dndeta/order_swapped_dndeta_crosscheck.txt`
 - `output/order_swapped_dndeta/OrderSwapped_DNdEta_Comparison.pdf`
+- `output/order_swapped_dndeta/OrderSwapped_DNdEta_ClosureComparison.pdf`
+- `output/order_swapped_dndeta/OrderSwapped_DNdEta_RatioRefoldingValidation.pdf`
+- `output/order_swapped_dndeta/OrderSwapped_DNdEta_MethodShiftVsSystematics.pdf`
 
 ## Result summary
 
@@ -75,12 +78,29 @@ Bin-by-bin `order-swapped / nominal`:
 Summary metrics:
 - maximum absolute shift: `0.1747`
 - maximum relative shift: `16.36%`
+- maximum `|shift| / nominal total systematic`: `2.312` in the last visible bin
+
+Nominal vs reordered performance metrics:
+- closure RMS(`unfolded / truth - 1`):
+  - nominal: `0.0229`
+  - reordered: `0.0691`
+- reco-space refolding RMS(`refolded / reco - 1`):
+  - nominal MC: `0.0090`
+  - nominal data: `0.0101`
+  - reordered MC: `0.0493`
+  - reordered data: `0.0533`
 
 The reordered closure itself is not perfectly flat:
 - `0.986, 0.978, 0.994, 0.992, 1.024, 1.066, 1.104, 1.148`
 
 So the same conclusion follows from the closure and from the data/MC comparison:
 changing the order matters mainly in the final merged tail bins.
+
+The extra validation views reinforce the same point:
+- low and mid bins are not very sensitive to the ordering choice
+- the reordered branch becomes clearly less stable in the tail
+- the tail shift is larger than the quoted nominal total systematic from bin 6
+  onward
 
 ## Interpretation
 
@@ -91,7 +111,11 @@ Reason:
   tied to the stored reco-side PID quantities and to the quoted residual and
   unfolding checks
 - the reordered implementation is useful as a method cross-check, but its own
-  tail closure is visibly worse than the nominal branch
+  closure and reco-space refolding performance are both visibly worse than the
+  nominal branch
+- where the reordered method shift becomes larger than the nominal systematic,
+  it does so in the same sparse merged tail bins where its self-validation is
+  also weakest
 
 So the reordered result should be documented as a cross-check, not promoted to
 replace the nominal quoted numbers.
