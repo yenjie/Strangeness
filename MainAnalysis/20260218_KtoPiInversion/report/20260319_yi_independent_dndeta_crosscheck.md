@@ -5,8 +5,8 @@ Date: `2026-03-19`
 ## Goal
 
 Build a genuinely more independent `K/pi` vs `dN_ch/deta` cross-check that is
-closer to Yi Chen's slide procedure than the earlier order-swapped appendix
-test.
+closer to Yi Chen's slide procedure than the reduced factorized stress
+tests.
 
 Target ordering:
 
